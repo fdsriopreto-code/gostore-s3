@@ -245,25 +245,40 @@ function copyText(t) { navigator.clipboard?.writeText(t).then(() => toast("Copie
 /* ---------- code block with mini highlighter ---------- */
 function hl(code, lang) {
   const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  let s = esc(code);
+  const span = (c, t) => `<span class="tok-${c}">${t}</span>`;
+  const s = esc(code);
+  // Single pass per language: one regex with alternatives, one replace. Doing
+  // it in one pass (instead of chained .replace calls) means the inserted
+  // <span class="tok-*"> markup is never re-scanned, so a later rule can't
+  // match inside an earlier rule's output (e.g. the flag rule matching the
+  // "-k" in class="tok-k").
   if (lang === "json") {
-    s = s.replace(/("(?:\\.|[^"\\])*")(\s*:)?/g, (_, str, colon) => colon ? `<span class="tok-f">${str}</span>${colon}` : `<span class="tok-s">${str}</span>`)
-         .replace(/\b(true|false|null)\b/g, '<span class="tok-k">$1</span>')
-         .replace(/(-?\d+\.?\d*)/g, '<span class="tok-n">$1</span>');
-  } else if (lang === "xml") {
-    s = s.replace(/(&lt;\/?)([\w:-]+)/g, '$1<span class="tok-f">$2</span>').replace(/([\w:-]+)=(&quot;.*?&quot;|".*?")/g, '<span class="tok-n">$1</span>=<span class="tok-s">$2</span>');
-  } else if (lang === "bash" || lang === "sh") {
-    s = s.replace(/(#.*)$/gm, '<span class="tok-c">$1</span>')
-         .replace(/('(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*")/g, '<span class="tok-s">$1</span>')
-         .replace(/\b(aws|mc|curl|export|gostore)\b/g, '<span class="tok-k">$1</span>')
-         .replace(/(--?[a-z][\w-]*)/g, '<span class="tok-n">$1</span>');
-  } else {
-    s = s.replace(/(\/\/.*|#.*)$/gm, '<span class="tok-c">$1</span>')
-         .replace(/('(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`)/g, '<span class="tok-s">$1</span>')
-         .replace(/\b(const|let|var|func|import|from|return|new|async|await|package|type|struct|if|else|for|def|class|with|as)\b/g, '<span class="tok-k">$1</span>')
-         .replace(/\b([A-Z]\w+)\b/g, '<span class="tok-f">$1</span>');
+    return s.replace(/("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|(-?\d+\.?\d*)/g,
+      (m, str, colon, kw, num) =>
+        str !== undefined ? (colon ? span("f", str) + colon : span("s", str))
+        : kw !== undefined ? span("k", kw)
+        : span("n", num));
   }
-  return s;
+  if (lang === "xml") {
+    return s.replace(/(&lt;\/?)([\w:-]+)|([\w:-]+)=(&quot;.*?&quot;|".*?")/g,
+      (m, open, tag, attr, val) =>
+        tag !== undefined ? open + span("f", tag)
+        : span("n", attr) + "=" + span("s", val));
+  }
+  if (lang === "bash" || lang === "sh") {
+    return s.replace(/(#[^\n]*)|('(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*")|\b(aws|mc|curl|export|gostore)\b|(--?[a-z][\w-]*)/g,
+      (m, c, str, kw, flag) =>
+        c !== undefined ? span("c", c)
+        : str !== undefined ? span("s", str)
+        : kw !== undefined ? span("k", kw)
+        : span("n", flag));
+  }
+  return s.replace(/(\/\/[^\n]*|#[^\n]*)|('(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`)|\b(const|let|var|func|import|from|return|new|async|await|package|type|struct|if|else|for|def|class|with|as)\b|\b([A-Z]\w+)\b/g,
+    (m, c, str, kw, cap) =>
+      c !== undefined ? span("c", c)
+      : str !== undefined ? span("s", str)
+      : kw !== undefined ? span("k", kw)
+      : span("f", cap));
 }
 function codeBlock(code, lang = "bash", label) {
   const wrap = el("div", { class: "code" });
@@ -412,6 +427,20 @@ async function viewDashboard(v) {
       kvRow("Signature", "AWS Signature V4", false),
       kvRow("Access key", session.ak, true)));
   v.append(hero);
+
+  // Disk usage bar: used vs free across the deployment's drives.
+  if (info.totalSpace && info.freeSpace != null) {
+    const total = info.totalSpace, free = info.freeSpace, used = Math.max(0, total - free);
+    const pct = total > 0 ? Math.round((used / total) * 100) : 0;
+    const cls = pct >= 90 ? "crit" : pct >= 75 ? "warn" : "";
+    v.append(el("div", { class: "cap" },
+      el("div", { class: "caph" }, ic(ICON.gauge), el("span", { class: "t" }, "Disk usage"),
+        el("span", { class: "pct" }, pct + "%")),
+      el("div", { class: "track" }, el("span", { class: cls, style: "width:" + pct + "%" })),
+      el("div", { class: "lbl" },
+        el("span", { html: "<b>" + fmtSize(used) + "</b> used" }),
+        el("span", { html: "<b>" + fmtSize(free) + "</b> free of " + fmtSize(total) }))));
+  }
 
   const tiles = el("div", { class: "grid stat-tiles" });
   const tile = (k, val, icon) => tiles.append(el("div", { class: "tile" },
