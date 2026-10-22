@@ -114,6 +114,87 @@ func Record(method string, status int, inBytes, outBytes int64, seconds float64)
 	}
 }
 
+// Snapshot is a JSON-friendly aggregate of the live counters, for the console
+// (served at /gostore/admin/v1/metrics). It is cheap to produce and read-only.
+type Snapshot struct {
+	UptimeSeconds     int64             `json:"uptimeSeconds"`
+	Requests          uint64            `json:"requests"`
+	RequestsByClass   map[string]uint64 `json:"requestsByClass"`
+	Errors            uint64            `json:"errors"`
+	TopErrors         map[string]uint64 `json:"topErrors"`
+	BytesIn           uint64            `json:"bytesIn"`
+	BytesOut          uint64            `json:"bytesOut"`
+	AvgLatencyMs      float64           `json:"avgLatencyMs"`
+	P50Ms             float64           `json:"p50Ms"`
+	P95Ms             float64           `json:"p95Ms"`
+	Goroutines        int               `json:"goroutines"`
+	IntegrityFailures uint64            `json:"integrityFailures"`
+	HealOK            uint64            `json:"healOk"`
+	HealFailed        uint64            `json:"healFailed"`
+	RepairQueued      uint64            `json:"repairQueued"`
+}
+
+// Snap returns a point-in-time copy of the aggregated request metrics.
+func Snap() Snapshot {
+	mu.Lock()
+	var total uint64
+	byClass := map[string]uint64{}
+	for k, v := range reqTotal {
+		total += v
+		byClass[k.class] += v
+	}
+	var errs uint64
+	top := map[string]uint64{}
+	for c, v := range errTotal {
+		errs += v
+		top[c] = v
+	}
+	avg := 0.0
+	if durN > 0 {
+		avg = durSum / float64(durN)
+	}
+	p50 := histPercentileLocked(0.50)
+	p95 := histPercentileLocked(0.95)
+	mu.Unlock()
+	return Snapshot{
+		UptimeSeconds:     int64(time.Since(start).Seconds()),
+		Requests:          total,
+		RequestsByClass:   byClass,
+		Errors:            errs,
+		TopErrors:         top,
+		BytesIn:           bytesIn.Load(),
+		BytesOut:          bytesOut.Load(),
+		AvgLatencyMs:      avg * 1000,
+		P50Ms:             p50 * 1000,
+		P95Ms:             p95 * 1000,
+		Goroutines:        runtime.NumGoroutine(),
+		IntegrityFailures: integrityFail.Load(),
+		HealOK:            healObjects.Load(),
+		HealFailed:        healFail.Load(),
+		RepairQueued:      repairQueued.Load(),
+	}
+}
+
+// histPercentileLocked approximates a latency percentile (seconds) from the
+// fixed-bucket histogram. Caller holds mu.
+func histPercentileLocked(p float64) float64 {
+	if durN == 0 {
+		return 0
+	}
+	target := uint64(float64(durN) * p)
+	var cum uint64
+	for i, c := range durCounts {
+		cum += c
+		if cum >= target {
+			if i < len(durBuckets) {
+				return durBuckets[i]
+			}
+			break
+		}
+	}
+	return durBuckets[len(durBuckets)-1]
+}
+
 // BucketUsage is one bucket's accounted size for the gauges.
 type BucketUsage struct {
 	Bucket  string

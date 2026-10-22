@@ -12,6 +12,7 @@ import (
 	"github.com/lojadopocket/gostore/internal/erasure"
 	"github.com/lojadopocket/gostore/internal/iam"
 	"github.com/lojadopocket/gostore/internal/iam/policy"
+	"github.com/lojadopocket/gostore/internal/metrics"
 	"github.com/lojadopocket/gostore/internal/object"
 	"github.com/lojadopocket/gostore/internal/storage"
 )
@@ -49,6 +50,8 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case path == "info" && r.Method == http.MethodGet:
 		s.adminInfo(w, r)
+	case path == "metrics" && r.Method == http.MethodGet:
+		writeJSON(w, http.StatusOK, metrics.Snap())
 	case path == "heal" && r.Method == http.MethodPost:
 		s.adminHeal(w, r)
 	case path == "scanner/run" && r.Method == http.MethodPost:
