@@ -332,6 +332,21 @@ button.primary:hover{filter:brightness(1.06)}
 .cap .track>span.crit{background:linear-gradient(90deg,var(--red),#e0661a)}
 .cap .lbl{display:flex;justify-content:space-between;margin-top:9px;font-size:12.5px;color:var(--muted)}
 .cap .lbl b{color:var(--text-2);font-weight:600}
+
+/* activity metric cells + storage-by-bucket bars */
+.mrow{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:10px;margin-top:6px}
+.mcell{background:var(--panel);border:1px solid var(--border);border-radius:var(--r1);padding:11px 13px;box-shadow:var(--shadow-sm);transition:border-color .12s}
+.mcell:hover{border-color:var(--border-2)}
+.mcell .mk{font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--faint)}
+.mcell .mv{font-size:17px;font-weight:700;margin-top:4px;letter-spacing:-.01em}
+.mcell .mv small{font-size:12px;font-weight:600;color:var(--muted)}
+.usebars{display:flex;flex-direction:column;gap:11px}
+.ub{display:grid;grid-template-columns:130px 1fr auto;gap:12px;align-items:center}
+.ub .ubn{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ub .ubt{height:8px;border-radius:99px;background:var(--code-inline);overflow:hidden}
+.ub .ubt>span{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent),#8b5cf6);transition:width .5s cubic-bezier(.4,0,.2,1)}
+.ub .ubv{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+@media(max-width:860px){.ub{grid-template-columns:92px 1fr auto;gap:8px}}
 </style>
 </head>
 <body>

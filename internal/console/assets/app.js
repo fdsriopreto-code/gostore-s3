@@ -215,6 +215,15 @@ const fmtSize = (n) => {
   return (i ? n.toFixed(1) : n) + " " + u[i];
 };
 const fmtDate = (s) => (s ? new Date(s).toLocaleString() : "");
+// fmtDuration turns a seconds count into a compact "2d 3h" / "5m" string.
+const fmtDuration = (s) => {
+  s = Math.max(0, Math.floor(s));
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  if (d > 0) return d + "d " + h + "h";
+  if (h > 0) return h + "h " + m + "m";
+  if (m > 0) return m + "m";
+  return s + "s";
+};
 // parseSize turns "2 GB" / "500mb" / "1073741824" into bytes (0 if blank/NaN).
 function parseSize(s) {
   s = String(s || "").trim().toLowerCase();
@@ -375,7 +384,13 @@ let lastConsoleRoute = "dashboard";
 let pollTimers = [];
 function stopPolls() { pollTimers.forEach(clearInterval); pollTimers = []; }
 
+// renderSeq guards against overlapping renders: a view that awaits can check
+// that it is still the current render before appending, so two renders racing
+// (e.g. a hashchange during an in-flight render) never double-append.
+let renderSeq = 0;
+
 async function render() {
+  ++renderSeq;
   if (thumbObs) { thumbObs.disconnect(); thumbObs = null; }
   stopPolls();
   renderNav();
@@ -413,8 +428,10 @@ function pageHeader(v, title, desc, actions) {
 
 /* ============================ views ============================ */
 async function viewDashboard(v) {
+  const seq = renderSeq;
   let info = {};
   try { info = await (await api("GET", "/gostore/admin/v1/info")).json(); } catch {}
+  if (seq !== renderSeq) return; // a newer render superseded us
   SERVER = info;
   pageHeader(v, "Dashboard", "Overview of your gostore deployment.");
 
@@ -453,6 +470,43 @@ async function viewDashboard(v) {
   tile("Policies", (info.policies ?? "—") + "", ICON.shield);
   if (info.dataInitialized) tile("Storage initialized", relTime(info.dataInitialized), ICON.clock);
   v.append(tiles);
+
+  // Live activity metrics (observability) — read-only, best-effort.
+  try {
+    const mx = await (await api("GET", "/gostore/admin/v1/metrics")).json();
+    if (seq !== renderSeq) return;
+    v.append(el("h3", { style: "margin:26px 0 8px;font-size:15px" }, "Activity"));
+    const mrow = el("div", { class: "mrow" });
+    const cell = (k, val) => mrow.append(el("div", { class: "mcell" },
+      el("div", { class: "mk" }, k), el("div", { class: "mv", html: val })));
+    cell("Requests", (mx.requests || 0).toLocaleString());
+    cell("Avg latency", (mx.avgLatencyMs || 0).toFixed(1) + " <small>ms</small>");
+    cell("p95 latency", (mx.p95Ms || 0).toFixed(0) + " <small>ms</small>");
+    cell("Data in", fmtSize(mx.bytesIn || 0));
+    cell("Data out", fmtSize(mx.bytesOut || 0));
+    cell("Errors", (mx.errors || 0).toLocaleString());
+    cell("Uptime", fmtDuration(mx.uptimeSeconds || 0));
+    cell("Goroutines", (mx.goroutines || 0).toLocaleString());
+    v.append(mrow);
+  } catch {}
+
+  // Storage by bucket — relative bars from the scanner's accounting.
+  try {
+    const du = await (await api("GET", "/gostore/admin/v1/datausage")).json();
+    if (seq !== renderSeq) return;
+    const bs = Object.entries(du.buckets || {})
+      .map(([n, u]) => ({ n, bytes: u.bytes || 0, objects: u.objects || 0 }))
+      .filter((b) => b.bytes > 0).sort((a, b) => b.bytes - a.bytes).slice(0, 8);
+    if (bs.length) {
+      v.append(el("h3", { style: "margin:26px 0 8px;font-size:15px" }, "Storage by bucket"));
+      const max = bs[0].bytes || 1;
+      v.append(el("div", { class: "card pad" }, el("div", { class: "usebars" },
+        ...bs.map((b) => el("div", { class: "ub" },
+          el("div", { class: "ubn" }, b.n),
+          el("div", { class: "ubt" }, el("span", { style: "width:" + Math.max(3, Math.round(b.bytes / max * 100)) + "%" })),
+          el("div", { class: "ubv" }, fmtSize(b.bytes) + " · " + b.objects.toLocaleString()))))));
+    }
+  } catch {}
 
   if (info.volumeWasEmptyAtBoot) {
     v.append(el("div", { class: "callout warn", style: "margin-top:16px" },
@@ -2005,8 +2059,10 @@ async function showApp() {
   $("#app").classList.remove("hidden");
   $("#whoami").textContent = session.ak;
   try { SERVER = await (await api("GET", "/gostore/admin/v1/info")).json(); } catch { SERVER = {}; }
+  // Setting location.hash fires 'hashchange' -> render(). Only render()
+  // directly when the hash is already set, so boot never renders twice.
   if (!location.hash) location.hash = "#/dashboard";
-  render();
+  else render();
 }
 $("#loginBtn").onclick = async () => {
   const ak = $("#ak").value.trim(), sk = $("#sk").value.trim();
