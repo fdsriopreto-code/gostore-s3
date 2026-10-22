@@ -7,6 +7,7 @@ package scanner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"hash/fnv"
 	"strings"
@@ -14,10 +15,17 @@ import (
 	"time"
 
 	"github.com/lojadopocket/gostore/internal/bucketcfg"
+	"github.com/lojadopocket/gostore/internal/configstore"
 	"github.com/lojadopocket/gostore/internal/logger"
 	"github.com/lojadopocket/gostore/internal/metrics"
 	"github.com/lojadopocket/gostore/internal/object"
 )
+
+// usageSnapKey stores the last data-usage snapshot so per-bucket counts and
+// sizes are available immediately after a restart, instead of being blank
+// until the next scan completes (up to an hour later). Only the lightweight
+// per-bucket totals are persisted — the large per-prefix map is not.
+const usageSnapKey = "datausage/snapshot.json"
 
 // objectHealer is implemented by the erasure backend: repair one object's
 // missing/corrupt shards and metadata in place.
@@ -124,6 +132,10 @@ type Scanner struct {
 	// mpuTTL aborts incomplete multipart uploads older than this even when no
 	// lifecycle rule covers them (AWS applies a default too). 0 disables.
 	mpuTTL time.Duration
+
+	// cstore persists the usage snapshot (nil if the backend has no config
+	// store). Set in New.
+	cstore configstore.Backend
 }
 
 // SetMultipartTTL sets the default abort age for abandoned multipart uploads.
@@ -150,7 +162,43 @@ func New(obj object.Layer, cfg *bucketcfg.Store, interval time.Duration) *Scanne
 	if h, ok := obj.(objectHealer); ok {
 		s.healer = h
 	}
+	if cb, ok := obj.(configstore.Backend); ok {
+		s.cstore = cb
+		s.loadUsage()
+	}
 	return s
+}
+
+// loadUsage warms the in-memory usage snapshot from the persisted copy so
+// per-bucket counts/sizes are available right after a restart.
+func (s *Scanner) loadUsage() {
+	if s.cstore == nil {
+		return
+	}
+	b, err := s.cstore.ReadConfig(context.Background(), usageSnapKey)
+	if err != nil {
+		return
+	}
+	var du DataUsage
+	if json.Unmarshal(b, &du) != nil {
+		return
+	}
+	if du.Buckets == nil {
+		du.Buckets = map[string]BucketUsage{}
+	}
+	du.Prefixes = map[string]BucketUsage{} // not persisted; filled on next scan
+	s.usage.Store(&du)
+}
+
+// saveUsage persists the lightweight per-bucket totals (Prefixes is json:"-"
+// so it is never written). Best-effort.
+func (s *Scanner) saveUsage(u *DataUsage) {
+	if s.cstore == nil || u == nil {
+		return
+	}
+	if b, err := json.Marshal(u); err == nil {
+		_ = s.cstore.WriteConfig(context.Background(), usageSnapKey, b)
+	}
 }
 
 // SetScrubInterval enables the periodic deep scrub (<=0 disables it).
@@ -359,6 +407,7 @@ func (s *Scanner) ScanOnce(ctx context.Context) Report {
 		s.expireNoncurrent(ctx, b.Name, rules, now, &rep)
 	}
 	s.usage.Store(usage)
+	s.saveUsage(usage)
 	return rep
 }
 
