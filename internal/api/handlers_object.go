@@ -46,6 +46,7 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 
 	opts := s.vopts(bucket, r)
 	opts.UserDefined = extractMetadata(r, key)
+	s.applyDefaultEncryption(bucket, opts.UserDefined)
 	if v := r.Header.Get("x-amz-tagging"); v != "" {
 		opts.UserTags = v
 	}
@@ -309,6 +310,7 @@ func (s *Server) handleCopyObject(w http.ResponseWriter, r *http.Request, bucket
 	}
 
 	dstOpts := object.ObjectOptions{UserDefined: extractMetadata(r, key)}
+	s.applyDefaultEncryption(bucket, dstOpts.UserDefined)
 	if strings.EqualFold(r.Header.Get("x-amz-metadata-directive"), "REPLACE") {
 		dstOpts.UserDefined["_directive"] = "REPLACE"
 	}
@@ -475,6 +477,21 @@ func sniffContentType(key string) string {
 // "application/octet-stream" (what curl and most SDKs default to), and the
 // object key has a well-known extension, the type is filled in from that
 // extension so the object plays / renders correctly when served later.
+// applyDefaultEncryption turns on SSE-S3 for a write when the bucket has
+// default encryption enabled and the caller didn't request encryption itself
+// (S3 "default bucket encryption").
+func (s *Server) applyDefaultEncryption(bucket string, ud map[string]string) {
+	if s.bcfg == nil || ud == nil {
+		return
+	}
+	if ud["x-amz-server-side-encryption"] != "" {
+		return
+	}
+	if s.bcfg.Get(bucket).Encryption == "AES256" {
+		ud["x-amz-server-side-encryption"] = "AES256"
+	}
+}
+
 func extractMetadata(r *http.Request, key string) map[string]string {
 	md := map[string]string{}
 	ct := strings.TrimSpace(r.Header.Get("Content-Type"))

@@ -1021,3 +1021,62 @@ func TestBodyIdleTimeout(t *testing.T) {
 	}
 	close(body.unblock)
 }
+
+func TestDefaultBucketEncryption(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	if resp := do(t, srv, http.MethodPut, "/encbucket", []byte{}, nil); resp.StatusCode != 200 {
+		t.Fatalf("CreateBucket: %d", resp.StatusCode)
+	}
+
+	// Enable default SSE-S3 (S3-standard XML).
+	encXML := []byte(`<ServerSideEncryptionConfiguration><Rule><ApplyServerSideEncryptionByDefault><SSEAlgorithm>AES256</SSEAlgorithm></ApplyServerSideEncryptionByDefault></Rule></ServerSideEncryptionConfiguration>`)
+	if resp := do(t, srv, http.MethodPut, "/encbucket?encryption", encXML, nil); resp.StatusCode != 200 {
+		t.Fatalf("PutBucketEncryption: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+
+	// GET returns the configured algorithm.
+	{
+		resp := do(t, srv, http.MethodGet, "/encbucket?encryption", nil, nil)
+		body := readBody(t, resp)
+		if resp.StatusCode != 200 || !strings.Contains(body, "<SSEAlgorithm>AES256</SSEAlgorithm>") {
+			t.Fatalf("GetBucketEncryption: %d %s", resp.StatusCode, body)
+		}
+	}
+
+	// A plain PUT (no SSE header) must be encrypted at rest because of the
+	// bucket default — HEAD reports the SSE header back.
+	if resp := do(t, srv, http.MethodPut, "/encbucket/secret.txt", []byte("company data"), nil); resp.StatusCode != 200 {
+		t.Fatalf("PutObject: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	{
+		resp := do(t, srv, http.MethodHead, "/encbucket/secret.txt", nil, nil)
+		if resp.StatusCode != 200 {
+			t.Fatalf("HeadObject: %d", resp.StatusCode)
+		}
+		if got := resp.Header.Get("x-amz-server-side-encryption"); got != "AES256" {
+			t.Fatalf("object not encrypted by bucket default: SSE=%q", got)
+		}
+		resp.Body.Close()
+	}
+	// ...and the content still round-trips (decryption works).
+	{
+		resp := do(t, srv, http.MethodGet, "/encbucket/secret.txt", nil, nil)
+		if b := readBody(t, resp); b != "company data" {
+			t.Fatalf("decrypted content wrong: %q", b)
+		}
+	}
+
+	// DELETE the config -> GET now 404s with the S3 error.
+	if resp := do(t, srv, http.MethodDelete, "/encbucket?encryption", nil, nil); resp.StatusCode != 204 {
+		t.Fatalf("DeleteBucketEncryption: %d", resp.StatusCode)
+	}
+	{
+		resp := do(t, srv, http.MethodGet, "/encbucket?encryption", nil, nil)
+		body := readBody(t, resp)
+		if resp.StatusCode != 404 || !strings.Contains(body, "ServerSideEncryptionConfigurationNotFoundError") {
+			t.Fatalf("GetBucketEncryption after delete: %d %s", resp.StatusCode, body)
+		}
+	}
+}

@@ -261,6 +261,8 @@ func s3Action(r *http.Request, req s3Request, q map[string][]string) string {
 				return "s3:GetBucketWebsite"
 			case has("compression"):
 				return "s3:GetBucketCompression"
+			case has("encryption"):
+				return "s3:GetEncryptionConfiguration"
 			case has("quota"):
 				return "s3:GetBucketQuota"
 			default:
@@ -288,6 +290,8 @@ func s3Action(r *http.Request, req s3Request, q map[string][]string) string {
 				return "s3:PutBucketWebsite"
 			case has("compression"):
 				return "s3:PutBucketCompression"
+			case has("encryption"):
+				return "s3:PutEncryptionConfiguration"
 			case has("quota"):
 				return "s3:PutBucketQuota"
 			case has("acl"):
@@ -309,6 +313,8 @@ func s3Action(r *http.Request, req s3Request, q map[string][]string) string {
 				return "s3:PutLifecycleConfiguration"
 			case has("website"):
 				return "s3:PutBucketWebsite"
+			case has("encryption"):
+				return "s3:PutEncryptionConfiguration"
 			case has("quota"):
 				return "s3:PutBucketQuota"
 			default:

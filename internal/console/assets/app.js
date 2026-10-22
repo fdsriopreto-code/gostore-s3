@@ -1066,6 +1066,28 @@ async function bucketSettings(v, b) {
       el("p", { class: "muted small" }, "Applies to objects written after this — existing objects are untouched. 2–5× smaller for logs/JSON/text."));
   }
 
+  // default encryption at rest (SSE-S3)
+  {
+    let encOn = false;
+    try { encOn = (await api("GET", "/" + b, { query: { encryption: "" } })).ok; } catch {}
+    const ebox = el("input", { type: "checkbox" }); ebox.checked = encOn;
+    sec("Default encryption (SSE-S3)",
+      el("label", { class: "row", style: "gap:8px" }, ebox,
+        el("span", {}, "encrypt every new object at rest with AES-256 (server-managed key)")),
+      el("button", { class: "primary sm", style: "margin-top:8px", onclick: async () => {
+        try {
+          if (ebox.checked) {
+            await must(await api("PUT", "/" + b, { query: { encryption: "" }, contentType: "application/xml",
+              body: "<ServerSideEncryptionConfiguration><Rule><ApplyServerSideEncryptionByDefault><SSEAlgorithm>AES256</SSEAlgorithm></ApplyServerSideEncryptionByDefault></Rule></ServerSideEncryptionConfiguration>" }));
+          } else {
+            await api("DELETE", "/" + b, { query: { encryption: "" } });
+          }
+          toast("Default encryption " + (ebox.checked ? "on" : "off"), "ok");
+        } catch (e) { toast(e.message, "err"); }
+      } }, "Apply"),
+      el("p", { class: "muted small" }, "Applies to objects written after this. Existing objects are untouched."));
+  }
+
   // versioning
   let vstat = "";
   try { vstat = t(parseXml(await (await api("GET", "/" + b, { query: { versioning: "" } })).text()), "Status"); } catch {}
