@@ -1,7 +1,9 @@
 // Package replication asynchronously copies object create/delete events to a
 // destination — another bucket on this server, or a remote S3-compatible
-// endpoint (SigV4-signed). Best-effort: each event is attempted a few times
-// then logged; there is no persistent retry queue yet.
+// endpoint (SigV4-signed). Events go through a durable queue persisted in the
+// config store, so a transient destination outage or a restart does not drop
+// them: pending events are reloaded on boot and retried with backoff until
+// they succeed (or their rule is removed).
 package replication
 
 import (
@@ -10,14 +12,17 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lojadopocket/gostore/internal/bucketcfg"
+	"github.com/lojadopocket/gostore/internal/configstore"
 	"github.com/lojadopocket/gostore/internal/logger"
 	"github.com/lojadopocket/gostore/internal/object"
 )
@@ -38,69 +43,247 @@ type Event struct {
 	VersionID string
 }
 
-// Manager runs replication for a pool of buckets.
+// queueKey stores the persisted pending-replication queue.
+const queueKey = "replication/queue.json"
+
+// maxBackoff caps the retry delay for a failing destination.
+const maxBackoff = 5 * time.Minute
+
+// queued is a durable pending event. It references its rule by ID (resolved
+// from bucketcfg at drain time) rather than copying the rule's secret key
+// into the queue file.
+type queued struct {
+	Bucket   string    `json:"bucket"`
+	Key      string    `json:"key"`
+	Op       Op        `json:"op"`
+	RuleID   string    `json:"ruleID"`
+	Attempts int       `json:"attempts"`
+	NextAt   time.Time `json:"nextAt"`
+}
+
+// Manager runs replication for a pool of buckets, backed by a durable queue.
 type Manager struct {
 	cfg    *bucketcfg.Store
 	obj    object.Layer
 	client *http.Client
-	wg     sync.WaitGroup
 	sem    chan struct{}
+
+	cstore configstore.Backend // nil if the backend has no config store
+	mu     sync.Mutex
+	queue  map[string]*queued
+	wake   chan struct{}
 }
 
-// New builds a Manager. maxConcurrent bounds in-flight replications.
+// New builds a Manager and reloads any persisted pending events.
 func New(cfg *bucketcfg.Store, obj object.Layer) *Manager {
-	return &Manager{
+	m := &Manager{
 		cfg: cfg, obj: obj,
 		client: &http.Client{Timeout: 60 * time.Second},
 		sem:    make(chan struct{}, 16),
+		queue:  map[string]*queued{},
+		wake:   make(chan struct{}, 1),
 	}
+	if cb, ok := obj.(configstore.Backend); ok {
+		m.cstore = cb
+		m.loadQueue()
+	}
+	return m
 }
 
-// Publish enqueues an event for the buckets that have matching rules.
+// Publish enqueues an event onto the durable queue for every matching rule.
+// It returns immediately; the background worker drains the queue with retry.
 func (m *Manager) Publish(e Event) {
 	if m == nil || m.cfg == nil {
 		return
 	}
 	rules := m.cfg.Get(e.Bucket).Replication
+	changed := false
+	now := time.Now()
+	m.mu.Lock()
 	for _, r := range rules {
 		if r.Prefix != "" && !strings.HasPrefix(e.Key, r.Prefix) {
 			continue
 		}
-		rule := r
-		m.wg.Add(1)
-		go func() {
-			defer m.wg.Done()
-			m.sem <- struct{}{}
-			defer func() { <-m.sem }()
-			m.run(rule, e)
-		}()
-	}
-}
-
-// Wait blocks until in-flight replications finish.
-func (m *Manager) Wait(ctx context.Context) {
-	done := make(chan struct{})
-	go func() { m.wg.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-ctx.Done():
-	}
-}
-
-func (m *Manager) run(rule bucketcfg.ReplicationRule, e Event) {
-	var err error
-	for attempt := 0; attempt < 3; attempt++ {
-		if e.Op == Delete {
-			err = m.replicateDelete(rule, e)
-		} else {
-			err = m.replicatePut(rule, e)
+		// A newer event for the same (bucket,key,rule) supersedes an older
+		// pending one — the latest state is what we need to replicate.
+		m.queue[qkey(e.Bucket, e.Key, r.ID)] = &queued{
+			Bucket: e.Bucket, Key: e.Key, Op: e.Op, RuleID: r.ID, NextAt: now,
 		}
-		if err == nil {
+		changed = true
+	}
+	m.mu.Unlock()
+	if changed {
+		m.persist()
+		m.signal()
+	}
+}
+
+// StartWorker drains the queue on a short tick (and whenever Publish signals)
+// until ctx is done. Mount one per Manager.
+func (m *Manager) StartWorker(ctx context.Context) {
+	t := time.NewTicker(2 * time.Second)
+	defer t.Stop()
+	for {
+		m.DrainOnce(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		case <-m.wake:
+		}
+	}
+}
+
+// DrainOnce attempts every due pending event once, in parallel (bounded).
+// Successful events are removed; failures are kept with exponential backoff;
+// events whose rule no longer exists are dropped. Exported for tests.
+func (m *Manager) DrainOnce(ctx context.Context) {
+	now := time.Now()
+	m.mu.Lock()
+	due := make([]*queued, 0, len(m.queue))
+	for _, q := range m.queue {
+		if !q.NextAt.After(now) {
+			due = append(due, q)
+		}
+	}
+	m.mu.Unlock()
+	if len(due) == 0 {
+		return
+	}
+
+	var changed atomic.Bool
+	var wg sync.WaitGroup
+	for _, q := range due {
+		rule, ok := m.resolveRule(q.Bucket, q.RuleID)
+		if !ok {
+			m.mu.Lock()
+			delete(m.queue, qkey(q.Bucket, q.Key, q.RuleID))
+			m.mu.Unlock()
+			changed.Store(true)
+			continue
+		}
+		wg.Add(1)
+		m.sem <- struct{}{}
+		go func(q *queued, rule bucketcfg.ReplicationRule) {
+			defer wg.Done()
+			defer func() { <-m.sem }()
+			err := m.attempt(rule, Event{Op: q.Op, Bucket: q.Bucket, Key: q.Key})
+			k := qkey(q.Bucket, q.Key, q.RuleID)
+			m.mu.Lock()
+			if cur := m.queue[k]; cur == q { // not superseded by a newer Publish
+				if err == nil {
+					delete(m.queue, k)
+				} else {
+					q.Attempts++
+					q.NextAt = time.Now().Add(backoff(q.Attempts))
+				}
+			}
+			m.mu.Unlock()
+			changed.Store(true)
+			if err != nil {
+				logger.Warn("replication attempt failed (will retry)",
+					"rule", rule.ID, "bucket", q.Bucket, "key", q.Key, "attempt", q.Attempts, "err", err)
+			}
+		}(q, rule)
+	}
+	wg.Wait()
+	if changed.Load() {
+		m.persist()
+	}
+}
+
+// Pending reports how many events are waiting in the queue.
+func (m *Manager) Pending() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.queue)
+}
+
+// Wait drains until the queue is empty or ctx is done (used on shutdown).
+func (m *Manager) Wait(ctx context.Context) {
+	for {
+		m.DrainOnce(ctx)
+		if m.Pending() == 0 {
 			return
 		}
-		time.Sleep(time.Duration(attempt+1) * time.Second)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(200 * time.Millisecond):
+		}
 	}
-	logger.Warn("replication failed", "rule", rule.ID, "bucket", e.Bucket, "key", e.Key, "err", err)
+}
+
+func (m *Manager) attempt(rule bucketcfg.ReplicationRule, e Event) error {
+	if e.Op == Delete {
+		return m.replicateDelete(rule, e)
+	}
+	return m.replicatePut(rule, e)
+}
+
+func (m *Manager) resolveRule(bucket, ruleID string) (bucketcfg.ReplicationRule, bool) {
+	for _, r := range m.cfg.Get(bucket).Replication {
+		if r.ID == ruleID {
+			return r, true
+		}
+	}
+	return bucketcfg.ReplicationRule{}, false
+}
+
+func (m *Manager) signal() {
+	select {
+	case m.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (m *Manager) loadQueue() {
+	b, err := m.cstore.ReadConfig(context.Background(), queueKey)
+	if err != nil {
+		return
+	}
+	var list []*queued
+	if json.Unmarshal(b, &list) != nil {
+		return
+	}
+	for _, q := range list {
+		if q != nil {
+			m.queue[qkey(q.Bucket, q.Key, q.RuleID)] = q
+		}
+	}
+	if len(m.queue) > 0 {
+		logger.Info("replication: reloaded pending queue", "pending", len(m.queue))
+	}
+}
+
+func (m *Manager) persist() {
+	if m.cstore == nil {
+		return
+	}
+	m.mu.Lock()
+	list := make([]*queued, 0, len(m.queue))
+	for _, q := range m.queue {
+		list = append(list, q)
+	}
+	m.mu.Unlock()
+	if b, err := json.Marshal(list); err == nil {
+		_ = m.cstore.WriteConfig(context.Background(), queueKey, b)
+	}
+}
+
+func qkey(bucket, key, ruleID string) string {
+	return bucket + "\x00" + key + "\x00" + ruleID
+}
+
+func backoff(attempts int) time.Duration {
+	d := 2 * time.Second
+	for i := 1; i < attempts && d < maxBackoff; i++ {
+		d *= 2
+	}
+	if d > maxBackoff {
+		d = maxBackoff
+	}
+	return d
 }
 
 func (m *Manager) replicatePut(rule bucketcfg.ReplicationRule, e Event) error {
