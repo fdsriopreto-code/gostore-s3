@@ -66,6 +66,11 @@ button.iconbtn{padding:6px;border-radius:6px}
 input,select,textarea{font:inherit;padding:8px 11px;border:1px solid var(--border-2);border-radius:var(--r1);
   background:var(--panel);color:var(--text);width:100%;transition:border-color .12s,box-shadow .12s}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+/* checkboxes/radios must NOT stretch to 100% width (that pushed their labels
+   far to the right and made forms look misaligned) */
+input[type=checkbox],input[type=radio]{width:auto;padding:0;accent-color:var(--accent);
+  width:16px;height:16px;flex:none;cursor:pointer}
+label.row{cursor:pointer}
 textarea{resize:vertical;min-height:120px;font:12.5px/1.6 var(--mono)}
 label.field-label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:5px;letter-spacing:.01em}
 

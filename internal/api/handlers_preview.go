@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	_ "golang.org/x/image/webp" // register WebP decoding for the image pipeline
+
 	"github.com/lojadopocket/gostore/internal/object"
 )
 
