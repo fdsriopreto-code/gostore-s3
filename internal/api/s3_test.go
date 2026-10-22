@@ -49,7 +49,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	if km, kerr := kms.New([]string{dir}); kerr == nil {
 		backend.SetKMS(km)
 	}
-	im, err := iam.New(testAK, testSK, configstore.NewDir(dir))
+	im, err := iam.New(testAK, testSK, configstore.NewDir(dir), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

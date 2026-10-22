@@ -11,7 +11,7 @@ import (
 
 func newMgr(t *testing.T) *Manager {
 	t.Helper()
-	m, err := New("rootadmin", "rootsecret123", configstore.NewDir(t.TempDir()))
+	m, err := New("rootadmin", "rootsecret123", configstore.NewDir(t.TempDir()), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,14 +50,14 @@ func TestUserPolicyEnforced(t *testing.T) {
 
 func TestPersistenceRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	m1, _ := New("rootadmin", "rootsecret123", configstore.NewDir(dir))
+	m1, _ := New("rootadmin", "rootsecret123", configstore.NewDir(dir), nil)
 	_ = m1.SetPolicy("teamrw", []byte(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:*"],"Resource":["arn:aws:s3:::team-*/*","arn:aws:s3:::team-*"]}]}`))
 	if err := m1.AddUser("bob", "bobsecret1", []string{"teamrw"}); err != nil {
 		t.Fatal(err)
 	}
 	_ = m1.AddServiceAccount("bob", "bobsvc0000000000", "bobsvcsecret1", "")
 
-	m2, err := New("rootadmin", "rootsecret123", configstore.NewDir(dir))
+	m2, err := New("rootadmin", "rootsecret123", configstore.NewDir(dir), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,8 +93,8 @@ func TestServiceAccountInheritsAndRestricts(t *testing.T) {
 
 func TestClusterRefreshPropagates(t *testing.T) {
 	be := configstore.NewDir(t.TempDir())
-	nodeA, _ := New("rootadmin", "rootsecret123", be)
-	nodeB, _ := New("rootadmin", "rootsecret123", be)
+	nodeA, _ := New("rootadmin", "rootsecret123", be, nil)
+	nodeB, _ := New("rootadmin", "rootsecret123", be, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

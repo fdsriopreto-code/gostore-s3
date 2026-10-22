@@ -24,7 +24,7 @@ func TestCLIEndToEnd(t *testing.T) {
 	cfg := config.Default()
 	cfg.Region = "us-east-1"
 	dir := t.TempDir()
-	im, _ := iam.New("cliadmin", "cliadmin-secret", configstore.NewDir(dir))
+	im, _ := iam.New("cliadmin", "cliadmin-secret", configstore.NewDir(dir), nil)
 	bc, _ := bucketcfg.Open(configstore.NewDir(dir))
 	srv := httptest.NewServer(api.NewServer(cfg, be, im, bc, event.New(bc), nil, nil))
 	defer srv.Close()

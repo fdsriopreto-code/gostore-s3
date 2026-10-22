@@ -27,7 +27,7 @@ func secServer(t *testing.T) (*httptest.Server, *iam.Manager) {
 	cfg := config.Default()
 	cfg.Region = region
 	cfg.Volumes = []string{root}
-	im, err := iam.New(testAK, testSK, backend)
+	im, err := iam.New(testAK, testSK, backend, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

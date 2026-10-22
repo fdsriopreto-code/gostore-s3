@@ -185,7 +185,7 @@ func runServer(args []string) error {
 		cluster.StartPeerMonitor(context.Background(), spec.PeerBases, secret)
 		n := len(spec.Disks)
 		logger.Info("cluster erasure pool ready", "disks", n, "dataBlocks", n-n/2, "parityBlocks", n/2)
-		return serve(cfg, obj, clusterRPC)
+		return serve(cfg, obj, clusterRPC, km)
 	}
 
 	groups, err := expandVolumeGroups(dargs)
@@ -257,12 +257,12 @@ func runServer(args []string) error {
 			"dataBlocks", n-n/2, "parityBlocks", n/2)
 	}
 
-	return serve(cfg, obj, nil)
+	return serve(cfg, obj, nil, km)
 }
 
 // serve wires IAM, bucket config, the scanner and the HTTP servers around an
 // already-built object backend, and blocks until shutdown.
-func serve(cfg config.Config, obj object.Layer, clusterRPC http.Handler) error {
+func serve(cfg config.Config, obj object.Layer, clusterRPC http.Handler, km *kms.Manager) error {
 	cb, ok := obj.(configstore.Backend)
 	if !ok {
 		return fmt.Errorf("object backend %T does not provide a config store", obj)
@@ -272,7 +272,7 @@ func serve(cfg config.Config, obj object.Layer, clusterRPC http.Handler) error {
 	defer stopRefresh()
 	startMemScavenger(refreshCtx)
 
-	iamMgr, err := iam.New(cfg.RootUser, cfg.RootPassword, cb)
+	iamMgr, err := iam.New(cfg.RootUser, cfg.RootPassword, cb, km)
 	if err != nil {
 		return fmt.Errorf("init IAM: %w", err)
 	}
