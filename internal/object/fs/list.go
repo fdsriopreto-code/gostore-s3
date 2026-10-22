@@ -12,18 +12,33 @@ import (
 	"github.com/lojadopocket/gostore/internal/object"
 )
 
-// walkKeys returns every object key in the bucket, slash-separated, sorted in
-// byte order (matching S3 listing order). M1 implementation: full walk +
-// in-memory sort. Fine for moderate buckets; a streaming/indexed listing
-// arrives with the erasure backend.
-func (f *FS) walkKeys(bucket string) ([]string, error) {
+// walkKeys returns the object keys of a bucket under prefix, slash-separated
+// and sorted in byte order (matching S3 listing order). When the prefix names
+// a directory boundary (contains a "/"), the walk starts at that subtree
+// instead of the whole bucket, so listing e.g. "avatars/user_123/" reads only
+// that folder rather than every object in the bucket — the single biggest
+// listing cost on a large, deeply-nested bucket. An empty prefix walks the
+// whole bucket as before.
+func (f *FS) walkKeys(bucket, prefix string) ([]string, error) {
 	root := f.bucketDir(bucket)
+	base := root
+	if dir := prefixWalkDir(prefix); dir != "" {
+		base = filepath.Join(root, filepath.FromSlash(dir))
+	}
+	// The scoped base may not exist (no object under that prefix) — that is an
+	// empty listing, not an error.
+	if _, err := os.Stat(base); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
 	var keys []string
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if p == root {
+		if d.IsDir() {
 			return nil
 		}
 		rel, rerr := filepath.Rel(root, p)
@@ -31,7 +46,7 @@ func (f *FS) walkKeys(bucket string) ([]string, error) {
 			return rerr
 		}
 		rel = filepath.ToSlash(rel)
-		if d.IsDir() {
+		if prefix != "" && !strings.HasPrefix(rel, prefix) {
 			return nil
 		}
 		keys = append(keys, rel)
@@ -42,6 +57,16 @@ func (f *FS) walkKeys(bucket string) ([]string, error) {
 	}
 	sort.Strings(keys)
 	return keys, nil
+}
+
+// prefixWalkDir returns the directory boundary of a listing prefix — the part
+// up to and including the last "/". "avatars/user_1/p" -> "avatars/user_1/",
+// "avatars/" -> "avatars/", "ab" (no "/") -> "" (walk the whole bucket).
+func prefixWalkDir(prefix string) string {
+	if i := strings.LastIndexByte(prefix, '/'); i >= 0 {
+		return prefix[:i+1]
+	}
+	return ""
 }
 
 type listParams struct {
@@ -93,7 +118,7 @@ func (f *FS) doList(bucket string, p listParams) (listPage, error) {
 		return page, nil
 	}
 
-	keys, err := f.walkKeys(bucket)
+	keys, err := f.walkKeys(bucket, p.prefix)
 	if err != nil {
 		return listPage{}, err
 	}
@@ -102,11 +127,16 @@ func (f *FS) doList(bucket string, p listParams) (listPage, error) {
 	seenPrefix := map[string]bool{}
 	count := 0
 
-	for _, k := range keys {
+	// keys is sorted, so jump straight past everything <= startAfter instead
+	// of scanning from the front on every (continuation) page — deep
+	// pagination was O(position) per page, now O(log n + pageSize).
+	begin := 0
+	if p.startAfter != "" {
+		begin = sort.Search(len(keys), func(i int) bool { return keys[i] > p.startAfter })
+	}
+
+	for _, k := range keys[begin:] {
 		if p.prefix != "" && !strings.HasPrefix(k, p.prefix) {
-			continue
-		}
-		if p.startAfter != "" && k <= p.startAfter {
 			continue
 		}
 

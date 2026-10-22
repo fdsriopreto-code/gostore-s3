@@ -378,7 +378,7 @@ func (f *FS) listVersioned(bucket, prefix, delimiter string, maxKeys int, curren
 	if err != nil {
 		return object.ListObjectVersionsInfo{}, err
 	}
-	plainKeys, err := f.walkKeys(bucket)
+	plainKeys, err := f.walkKeys(bucket, prefix)
 	if err != nil {
 		return object.ListObjectVersionsInfo{}, err
 	}
