@@ -435,15 +435,23 @@ async function viewDashboard(v) {
   SERVER = info;
   pageHeader(v, "Dashboard", "Overview of your gostore deployment.");
 
-  const hero = el("div", { class: "hero" },
-    el("h3", {}, ic(ICON.term), "Your S3 endpoint"),
-    el("div", { class: "kvbig" },
-      kvRow("Endpoint", location.origin, true),
-      kvRow("Region", info.region || REGION, true),
-      kvRow("Addressing", "path-style (required)", false),
-      kvRow("Signature", "AWS Signature V4", false),
-      kvRow("Access key", session.ak, true)));
-  v.append(hero);
+  // Endpoint card — collapsible (it's reference info for the backend; the
+  // collapsed state is remembered per browser).
+  const heroCollapsed = (() => { try { return localStorage.getItem("gostore.hero") === "0"; } catch { return false; } })();
+  const kv = el("div", { class: "kvbig" + (heroCollapsed ? " hidden" : "") },
+    kvRow("Endpoint", location.origin, true),
+    kvRow("Region", info.region || REGION, true),
+    kvRow("Addressing", "path-style (required)", false),
+    kvRow("Signature", "AWS Signature V4", false),
+    kvRow("Access key", session.ak, true));
+  const chev = el("span", { class: "hero-chev" }, ic(ICON.chev));
+  if (!heroCollapsed) chev.classList.add("open");
+  const head = el("h3", { class: "hero-head", title: "Click to collapse/expand", onclick: () => {
+    const nowHidden = kv.classList.toggle("hidden");
+    chev.classList.toggle("open", !nowHidden);
+    try { localStorage.setItem("gostore.hero", nowHidden ? "0" : "1"); } catch {}
+  } }, ic(ICON.term), el("span", { class: "grow" }, "Your S3 endpoint"), chev);
+  v.append(el("div", { class: "hero" }, head, kv));
 
   // Disk usage bar: used vs free across the deployment's drives.
   if (info.totalSpace && info.freeSpace != null) {
