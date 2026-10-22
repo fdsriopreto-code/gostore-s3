@@ -8,6 +8,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -99,6 +100,64 @@ func (c *Client) Head(ctx context.Context, key string) (exists bool, size int64,
 		return false, 0, "", fmt.Errorf("remote HEAD %s: %s", key, resp.Status)
 	}
 	return true, resp.ContentLength, strings.Trim(resp.Header.Get("ETag"), `"`), nil
+}
+
+// ListEntry is one object in the remote bucket. Key includes the client's
+// Prefix (strip it to get back the logical key passed to Put/Get).
+type ListEntry struct {
+	Key  string
+	Size int64
+	ETag string
+}
+
+// List returns one page (up to 1000) of remote objects under the client's
+// Prefix, continuing after token (ListObjectsV2). The returned next token is
+// "" when the listing is complete.
+func (c *Client) List(ctx context.Context, token string) (entries []ListEntry, next string, err error) {
+	u := strings.TrimRight(c.Endpoint, "/") + "/" + c.Bucket
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	vals := url.Values{}
+	vals.Set("list-type", "2")
+	vals.Set("max-keys", "1000")
+	if c.Prefix != "" {
+		vals.Set("prefix", c.Prefix)
+	}
+	if token != "" {
+		vals.Set("continuation-token", token)
+	}
+	req.URL.RawQuery = vals.Encode()
+	c.sign(req, emptyHash)
+	resp, err := c.http().Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return nil, "", fmt.Errorf("remote LIST: %s: %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	var out struct {
+		Contents []struct {
+			Key  string `xml:"Key"`
+			Size int64  `xml:"Size"`
+			ETag string `xml:"ETag"`
+		} `xml:"Contents"`
+		IsTruncated           bool   `xml:"IsTruncated"`
+		NextContinuationToken string `xml:"NextContinuationToken"`
+	}
+	if err := xml.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, "", err
+	}
+	for _, e := range out.Contents {
+		entries = append(entries, ListEntry{Key: e.Key, Size: e.Size, ETag: strings.Trim(e.ETag, `"`)})
+	}
+	if out.IsTruncated {
+		next = out.NextContinuationToken
+	}
+	return entries, next, nil
 }
 
 // Delete removes the remote object (a 404 is not an error).

@@ -192,6 +192,35 @@ func (m *Manager) DrainOnce(ctx context.Context) {
 	}
 }
 
+// Backfill enqueues a replicate-Put for every existing object in a bucket, so
+// a newly-added rule covers data written before it (replication otherwise
+// only sees new writes). Events go onto the durable queue and are drained by
+// the worker with retry. Returns how many objects were enqueued.
+func (m *Manager) Backfill(ctx context.Context, bucket string) (int, error) {
+	if m == nil || m.obj == nil {
+		return 0, nil
+	}
+	n, token := 0, ""
+	for {
+		if ctx.Err() != nil {
+			return n, ctx.Err()
+		}
+		li, err := m.obj.ListObjectsV2(ctx, bucket, "", token, "", 1000, false, "")
+		if err != nil {
+			return n, err
+		}
+		for _, o := range li.Objects {
+			m.Publish(Event{Op: Put, Bucket: bucket, Key: o.Name})
+			n++
+		}
+		if !li.IsTruncated {
+			break
+		}
+		token = li.NextContinuationToken
+	}
+	return n, nil
+}
+
 // Pending reports how many events are waiting in the queue.
 func (m *Manager) Pending() int {
 	m.mu.Lock()

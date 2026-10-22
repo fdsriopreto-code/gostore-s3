@@ -75,3 +75,41 @@ func TestDurableQueueSurvivesRestartAndRetries(t *testing.T) {
 		t.Fatalf("persisted queue should be empty after success, got %d", m3.Pending())
 	}
 }
+
+func TestBackfillEnqueuesExistingObjects(t *testing.T) {
+	f, err := fsb.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.MakeBucket(ctx(), "src", object.MakeBucketOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.MakeBucket(ctx(), "dst", object.MakeBucketOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// Objects written BEFORE the rule exists — replication would never see them.
+	for _, k := range []string{"a/1.txt", "a/2.txt", "b/3.txt"} {
+		putStr(t, f, "src", k, "data-"+k)
+	}
+
+	bc, _ := bucketcfg.Open(f)
+	_ = bc.Update("src", func(c *bucketcfg.Config) {
+		c.Replication = []bucketcfg.ReplicationRule{{ID: "r1", DestBucket: "dst"}}
+	})
+
+	m := New(bc, f)
+	n, err := m.Backfill(ctx(), "src")
+	if err != nil || n != 3 {
+		t.Fatalf("Backfill: n=%d err=%v (want 3)", n, err)
+	}
+	m.DrainOnce(ctx())
+	if m.Pending() != 0 {
+		t.Fatalf("queue not drained: %d pending", m.Pending())
+	}
+	// All three now exist in the destination.
+	for _, k := range []string{"a/1.txt", "a/2.txt", "b/3.txt"} {
+		if _, err := f.GetObjectInfo(ctx(), "dst", k, object.ObjectOptions{}); err != nil {
+			t.Fatalf("backfilled object missing in dst: %s: %v", k, err)
+		}
+	}
+}
