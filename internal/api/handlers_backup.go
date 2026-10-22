@@ -46,6 +46,86 @@ type backupJob struct {
 
 	restoreStat    atomic.Pointer[restoreStatus]
 	restoreRunning atomic.Bool
+
+	verifyStat    atomic.Pointer[verifyStatus]
+	verifyRunning atomic.Bool
+}
+
+// verifyStatus tracks a backup-integrity check: for every local object, is the
+// remote backup copy present and matching (size + ETag)?
+type verifyStatus struct {
+	Running       bool      `json:"running"`
+	LastRun       time.Time `json:"lastRun,omitempty"`
+	LastError     string    `json:"lastError,omitempty"`
+	Checked       int64     `json:"checked"`
+	OK            int64     `json:"ok"`
+	Mismatched    int64     `json:"mismatched"`    // remote copy differs (size/etag)
+	MissingRemote int64     `json:"missingRemote"` // local object has no backup copy
+}
+
+func cloneVS(s *verifyStatus) *verifyStatus { c := *s; return &c }
+
+// verify checks that every local object has a matching copy in the backup
+// tier. Read-only — it never writes. Single-flight.
+func (j *backupJob) verify(ctx context.Context) {
+	if !j.verifyRunning.CompareAndSwap(false, true) {
+		return
+	}
+	defer j.verifyRunning.Store(false)
+
+	st := &verifyStatus{Running: true, LastRun: time.Now().UTC()}
+	j.verifyStat.Store(st)
+	cl := erasure.TierClient(j.config().Tier)
+	if cl == nil {
+		st.Running, st.LastError = false, "no backup tier is configured"
+		j.verifyStat.Store(cloneVS(st))
+		return
+	}
+	buckets, err := j.obj.ListBuckets(ctx)
+	if err != nil {
+		st.Running, st.LastError = false, err.Error()
+		j.verifyStat.Store(cloneVS(st))
+		return
+	}
+	for _, b := range buckets {
+		token := ""
+		for {
+			if ctx.Err() != nil {
+				break
+			}
+			li, lerr := j.obj.ListObjectsV2(ctx, b.Name, "", token, "", 1000, false, "")
+			if lerr != nil {
+				st.LastError = lerr.Error()
+				break
+			}
+			for _, o := range li.Objects {
+				rk := b.Name + "/" + o.Name
+				st.Checked++
+				exists, sz, retag, herr := cl.Head(ctx, rk)
+				if herr != nil {
+					st.LastError = herr.Error()
+					continue
+				}
+				if !exists {
+					st.MissingRemote++
+				} else {
+					multipart := strings.Contains(o.ETag, "-")
+					if sz != o.Size || (!multipart && retag != "" && retag != o.ETag) {
+						st.Mismatched++
+					} else {
+						st.OK++
+					}
+				}
+				j.verifyStat.Store(cloneVS(st))
+			}
+			if !li.IsTruncated {
+				break
+			}
+			token = li.NextContinuationToken
+		}
+	}
+	st.Running = false
+	j.verifyStat.Store(st)
 }
 
 // restoreStatus tracks a pull-back (disaster recovery) from the backup tier.
@@ -225,10 +305,19 @@ func (j *backupJob) run(ctx context.Context) {
 					break
 				}
 				rk := b.Name + "/" + o.Name
-				if exists, sz, _, herr := cl.Head(ctx, rk); herr == nil && exists && sz == o.Size {
-					st.Skipped++
-					j.status.Store(clone(st))
-					continue
+				// Content-aware incremental: skip only when the remote copy
+				// matches. Same size AND same ETag (for a single-part object
+				// whose ETag is a plain md5) means unchanged; a same-size
+				// content change no longer slips through. Multipart ETags
+				// ("...-N") can't be compared to the remote's single-PUT md5,
+				// so those fall back to size-only.
+				if exists, sz, retag, herr := cl.Head(ctx, rk); herr == nil && exists && sz == o.Size {
+					multipart := strings.Contains(o.ETag, "-")
+					if multipart || retag == "" || retag == o.ETag {
+						st.Skipped++
+						j.status.Store(clone(st))
+						continue
+					}
 				}
 				gr, gerr := j.obj.GetObjectNInfo(ctx, b.Name, o.Name, nil, nil, object.ObjectOptions{})
 				if gerr != nil {
@@ -270,6 +359,9 @@ func (s *Server) handleAdminBackup(w http.ResponseWriter, r *http.Request) {
 		if rs := s.backup.restoreStat.Load(); rs != nil {
 			out["restore"] = rs
 		}
+		if vs := s.backup.verifyStat.Load(); vs != nil {
+			out["verify"] = vs
+		}
 		writeJSON(w, http.StatusOK, out)
 	case http.MethodPut:
 		b, _ := io.ReadAll(io.LimitReader(r.Body, 1<<16))
@@ -294,6 +386,13 @@ func (s *Server) handleAdminBackup(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAdminBackupRun(w http.ResponseWriter, r *http.Request) {
 	go s.backup.run(context.Background())
+	writeJSON(w, http.StatusAccepted, map[string]any{"started": true})
+}
+
+// handleAdminBackupVerify checks that every local object has a matching copy
+// in the backup tier (read-only).
+func (s *Server) handleAdminBackupVerify(w http.ResponseWriter, r *http.Request) {
+	go s.backup.verify(context.Background())
 	writeJSON(w, http.StatusAccepted, map[string]any{"started": true})
 }
 
