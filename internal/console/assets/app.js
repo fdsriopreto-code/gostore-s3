@@ -1400,10 +1400,25 @@ async function viewMonitoring(v) {
     const bc = el("div", { class: "card", style: "margin:20px 0" });
     bc.append(el("div", { class: "row", style: "justify-content:space-between;align-items:center" },
       el("h3", { style: "margin:0;font-size:15px" }, "Automatic backup"),
-      el("button", {
-        class: "ghost sm", disabled: tiers.length ? null : "disabled",
-        onclick: async () => { try { await must(await api("POST", "/gostore/admin/v1/backup/run")); toast("Backup started", "ok"); setTimeout(render, 1200); } catch (e) { toast(e.message, "err"); } }
-      }, "Back up now")));
+      el("div", { class: "row", style: "gap:8px" },
+        el("button", {
+          class: "ghost sm", disabled: tiers.length ? null : "disabled",
+          onclick: async () => { try { await must(await api("POST", "/gostore/admin/v1/backup/run")); toast("Backup started", "ok"); setTimeout(render, 1200); } catch (e) { toast(e.message, "err"); } }
+        }, "Back up now"),
+        el("button", {
+          class: "ghost sm", disabled: tiers.length ? null : "disabled",
+          onclick: async () => {
+            if (!confirm("Restore from the backup tier?\n\nThis pulls objects that are MISSING locally back from the remote backup — for disaster recovery. Existing local objects are NOT overwritten.")) return;
+            try { await must(await api("POST", "/gostore/admin/v1/backup/restore")); toast("Restore started — watch the status", "ok"); setTimeout(render, 1500); } catch (e) { toast(e.message, "err"); }
+          }
+        }, "Restore from tier"))));
+    if (bk.restore) {
+      const rs = bk.restore;
+      bc.append(el("p", { class: "muted small" },
+        (rs.running ? "Restoring… " : "Last restore: ") +
+        `${rs.restored || 0} restored, ${rs.skipped || 0} skipped, ${rs.errors || 0} errors` +
+        (rs.lastError ? " — " + rs.lastError : "")));
+    }
 
     if (!tiers.length) {
       bc.append(el("p", { class: "muted small" }, "No remote tier is configured. Set ",

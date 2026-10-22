@@ -129,6 +129,12 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		s.handleAdminBackup(w, r)
 	case path == "backup/run" && r.Method == http.MethodPost:
 		s.handleAdminBackupRun(w, r)
+	case path == "backup/restore" && r.Method == http.MethodPost:
+		s.handleAdminBackupRestore(w, r)
+	case path == "replication/backfill" && r.Method == http.MethodPost:
+		s.handleAdminReplicationBackfill(w, r)
+	case path == "replication" && r.Method == http.MethodGet:
+		writeJSON(w, http.StatusOK, map[string]any{"pending": s.repl.Pending()})
 	case path == "pool" && r.Method == http.MethodGet:
 		s.adminPoolStatus(w)
 	case path == "pool/decommission" && r.Method == http.MethodPost:
