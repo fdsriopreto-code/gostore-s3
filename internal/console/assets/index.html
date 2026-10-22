@@ -2,8 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>gostore console</title>
+<meta name="theme-color" content="#4f46e5">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="gostore">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Cpath d='M8 11h16l-2 13H10z' fill='none' stroke='white' stroke-width='2.2' stroke-linejoin='round'/%3E%3Cpath d='M12 11V9a4 4 0 0 1 8 0v2' fill='none' stroke='white' stroke-width='2.2'/%3E%3C/svg%3E">
 <style>
 :root{
@@ -253,9 +260,10 @@ dialog .btns{display:flex;gap:9px;justify-content:flex-end;margin-top:22px}
   #app{grid-template-columns:1fr}
   aside.nav{position:fixed;z-index:50;width:min(280px,82vw);height:100%;transform:translateX(-101%);transition:transform .2s;box-shadow:var(--shadow)}
   aside.nav.open{transform:none}
-  /* clear the fixed hamburger so it never sits on top of the page title */
-  .wrap{padding:60px 16px 56px}
-  .wrap.docs{padding:60px 16px 56px}
+  /* clear the fixed hamburger so it never sits on top of the page title;
+     add iOS safe-area insets for standalone (installed PWA) display */
+  .wrap{padding:calc(60px + env(safe-area-inset-top,0px)) calc(16px + env(safe-area-inset-right,0px)) 56px calc(16px + env(safe-area-inset-left,0px))}
+  .wrap.docs{padding:calc(60px + env(safe-area-inset-top,0px)) 16px 56px}
   #menuBtn{display:inline-flex!important}
   .pageh{flex-wrap:wrap}
   .pageh h2{font-size:20px}
@@ -275,7 +283,7 @@ dialog .btns{display:flex;gap:9px;justify-content:flex-end;margin-top:22px}
   dialog{width:94%;padding:20px}
   .code pre{font-size:11.5px}
 }
-#menuBtn{display:none;position:fixed;top:12px;left:12px;z-index:55;background:var(--panel);box-shadow:var(--shadow-sm)}
+#menuBtn{display:none;position:fixed;top:calc(12px + env(safe-area-inset-top,0px));left:calc(12px + env(safe-area-inset-left,0px));z-index:55;background:var(--panel);box-shadow:var(--shadow-sm)}
 
 /* ============ visual polish (v2) ============ */
 body{background:
@@ -366,5 +374,12 @@ button.primary:hover{filter:brightness(1.06)}
 <dialog id="modal"></dialog>
 
 <script src="app.js"></script>
+<script>
+// Register the PWA service worker (static shell caching only; API traffic is
+// never intercepted). Best-effort — the console works without it.
+if ("serviceWorker" in navigator) {
+  addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
+</script>
 </body>
 </html>
