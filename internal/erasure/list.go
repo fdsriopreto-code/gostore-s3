@@ -142,11 +142,15 @@ func (p *Pool) doList(ctx context.Context, bucket string, lp listParams) (listPa
 	count := 0
 	var wantKeys []string // real objects to stat for this page (in order)
 
-	for _, k := range keys {
+	// keys is sorted: binary-search past everything <= startAfter so a deep
+	// continuation page doesn't re-scan all the keys before it.
+	begin := 0
+	if lp.startAfter != "" {
+		begin = sort.Search(len(keys), func(i int) bool { return keys[i] > lp.startAfter })
+	}
+
+	for _, k := range keys[begin:] {
 		if lp.prefix != "" && !strings.HasPrefix(k, lp.prefix) {
-			continue
-		}
-		if lp.startAfter != "" && k <= lp.startAfter {
 			continue
 		}
 		if lp.delimiter != "" {
