@@ -134,7 +134,8 @@ thead th.sorth{cursor:pointer;user-select:none}
 thead th.sorth:hover{color:var(--text-2)}
 thead th.sorth.on{color:var(--text)}
 thead th .sarrow{font-size:10px}
-td.num{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
+td.num{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted);white-space:nowrap}
+th.num{text-align:right}
 td.act{text-align:right;white-space:nowrap}
 td .nm{display:flex;align-items:center;gap:9px;min-width:0}
 td .nm .i{color:var(--faint)} td .nm.folder .i{color:var(--accent)}
@@ -250,12 +251,31 @@ dialog .btns{display:flex;gap:9px;justify-content:flex-end;margin-top:22px}
 
 @media (max-width:860px){
   #app{grid-template-columns:1fr}
-  aside.nav{position:fixed;z-index:50;width:250px;height:100%;transform:translateX(-101%);transition:transform .2s}
+  aside.nav{position:fixed;z-index:50;width:min(280px,82vw);height:100%;transform:translateX(-101%);transition:transform .2s;box-shadow:var(--shadow)}
   aside.nav.open{transform:none}
-  .wrap{padding:20px}
+  /* clear the fixed hamburger so it never sits on top of the page title */
+  .wrap{padding:60px 16px 56px}
+  .wrap.docs{padding:60px 16px 56px}
   #menuBtn{display:inline-flex!important}
+  .pageh{flex-wrap:wrap}
+  .pageh h2{font-size:20px}
+  .pageh .actions{margin-left:0;width:100%;margin-top:10px}
+  .toolbar{gap:8px}
+  .search{flex:1 1 100%;min-width:0;max-width:none;width:100%}
+  .hero{padding:18px 16px}
+  .kvbig{grid-template-columns:1fr;gap:4px 0}
+  .kvbig .k{margin-top:8px}
+  .kvbig .v{flex-wrap:wrap}
+  .stat-tiles{grid-template-columns:1fr 1fr!important}
+  .tile .v{font-size:20px}
+  /* wide tables scroll horizontally instead of overflowing the viewport */
+  .card{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  thead th,tbody td{padding:10px 12px}
+  #drawer{width:100vw}
+  dialog{width:94%;padding:20px}
+  .code pre{font-size:11.5px}
 }
-#menuBtn{display:none;position:fixed;top:12px;left:12px;z-index:55}
+#menuBtn{display:none;position:fixed;top:12px;left:12px;z-index:55;background:var(--panel);box-shadow:var(--shadow-sm)}
 
 /* ============ visual polish (v2) ============ */
 body{background:

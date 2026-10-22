@@ -500,16 +500,32 @@ async function viewBuckets(v) {
       }) }, ic(ICON.plus), "Create bucket"),
   ]);
   if (!names.length) { v.append(emptyState(ICON.bucket, "No buckets yet", "Create one to start storing objects.")); return; }
+
+  // Per-bucket usage (objects + size) from the scanner's accounting pass —
+  // best-effort: needs admin, and is blank until the first scan.
+  let usage = {};
+  try {
+    const du = await (await api("GET", "/gostore/admin/v1/datausage")).json();
+    if (du && du.buckets) usage = du.buckets;
+  } catch {}
+
   const tb = el("tbody");
-  names.forEach((n, i) => tb.append(el("tr", { class: "clk", onclick: () => go("buckets/" + encodeURIComponent(n)) },
-    el("td", {}, el("div", { class: "nm folder" }, ic(ICON.bucket), el("span", {}, n))),
-    el("td", { class: "muted" }, relTime(dates[i])),
-    el("td", { class: "act" }, el("button", { class: "danger sm", onclick: async (e) => {
-      e.stopPropagation();
-      if (!confirm(`Delete bucket "${n}"?  It must be empty.`)) return;
-      try { await must(await api("DELETE", "/" + n)); toast("Deleted", "ok"); render(); } catch (err) { toast(err.message, "err"); }
-    } }, ic(ICON.trash), "Delete")))));
-  v.append(el("div", { class: "card" }, el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Created"), el("th", {}))), tb)));
+  names.forEach((n, i) => {
+    const u = usage[n];
+    tb.append(el("tr", { class: "clk", onclick: () => go("buckets/" + encodeURIComponent(n)) },
+      el("td", {}, el("div", { class: "nm folder" }, ic(ICON.bucket), el("span", {}, n))),
+      el("td", { class: "num" }, u ? (u.objects ?? 0).toLocaleString() : "—"),
+      el("td", { class: "num" }, u ? fmtSize(u.bytes || 0) : "—"),
+      el("td", { class: "muted" }, relTime(dates[i])),
+      el("td", { class: "act" }, el("button", { class: "danger sm", onclick: async (e) => {
+        e.stopPropagation();
+        if (!confirm(`Delete bucket "${n}"?  It must be empty.`)) return;
+        try { await must(await api("DELETE", "/" + n)); toast("Deleted", "ok"); render(); } catch (err) { toast(err.message, "err"); }
+      } }, ic(ICON.trash), "Delete"))));
+  });
+  v.append(el("div", { class: "card" }, el("table", {}, el("thead", {}, el("tr", {},
+    el("th", {}, "Name"), el("th", { class: "num" }, "Objects"), el("th", { class: "num" }, "Size"),
+    el("th", {}, "Created"), el("th", {}))), tb)));
 }
 const emptyState = (icon, h, sub) => el("div", { class: "empty" }, ic(icon), el("h3", {}, h), el("div", { class: "muted" }, sub));
 
