@@ -32,6 +32,11 @@ var (
 	ErrObjectLocked = errors.New("object: blocked by object-lock retention or legal hold")
 	ErrNotVersioned = errors.New("object: bucket is not versioned")
 
+	// SSE-C: the object was stored with a customer key and the read either
+	// supplied no key or the wrong one.
+	ErrSSECKeyRequired = errors.New("object: object is SSE-C encrypted; a customer key is required")
+	ErrSSECKeyMismatch = errors.New("object: SSE-C customer key does not match the key the object was encrypted with")
+
 	ErrStorageFull   = errors.New("object: storage backend is full")
 	ErrReadQuorum    = errors.New("object: not enough healthy disks for read quorum")
 	ErrWriteQuorum   = errors.New("object: not enough healthy disks for write quorum")

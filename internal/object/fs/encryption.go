@@ -71,6 +71,76 @@ func (f *FS) encryptToTmp(r io.Reader, expected int64) (tmp string, plainSize in
 	return tmp, counted.n, hex.EncodeToString(h.Sum(nil)), m, nil
 }
 
+// encryptToTmpSSEC encrypts r with a customer-provided key (SSE-C): the key is
+// used directly as the data key and never stored — only its MD5, to validate
+// the key on read.
+func (f *FS) encryptToTmpSSEC(r io.Reader, expected int64, key []byte, keyMD5 string) (tmp string, plainSize int64, md5hex string, m objMeta, err error) {
+	prefix, err := sse.NewNoncePrefix()
+	if err != nil {
+		return "", 0, "", objMeta{}, err
+	}
+	tmp = f.tmpPath()
+	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return "", 0, "", objMeta{}, err
+	}
+	h := md5.New()
+	counted := &countReader{r: io.TeeReader(r, h)}
+	if _, err = io.Copy(out, sse.EncryptReader(counted, key, prefix)); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmp)
+		return "", 0, "", objMeta{}, err
+	}
+	if err = out.Sync(); err == nil {
+		err = out.Close()
+	} else {
+		_ = out.Close()
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+		return "", 0, "", objMeta{}, err
+	}
+	if expected >= 0 && counted.n != expected {
+		_ = os.Remove(tmp)
+		return "", 0, "", objMeta{}, object.ErrIncompleteBody
+	}
+	m = objMeta{
+		SSE:         "SSE-C",
+		PlainSize:   counted.n,
+		NoncePrefix: hex.EncodeToString(prefix),
+		SSECKeyMD5:  keyMD5,
+	}
+	return tmp, counted.n, hex.EncodeToString(h.Sum(nil)), m, nil
+}
+
+// openDecryptingSSEC decrypts an SSE-C object [off, off+length) with the
+// customer-provided key.
+func (f *FS) openDecryptingSSEC(path string, m objMeta, key []byte, off, length int64) (io.ReadCloser, error) {
+	prefix, err := hex.DecodeString(m.NoncePrefix)
+	if err != nil {
+		return nil, err
+	}
+	fh, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	if off < 0 {
+		off = 0
+	}
+	if length < 0 || off+length > m.PlainSize {
+		length = m.PlainSize - off
+	}
+	firstChunk, cipherOff, intraSkip := sse.CipherOffsetForPlain(off)
+	if cipherOff > 0 {
+		if _, err := fh.Seek(cipherOff, io.SeekStart); err != nil {
+			_ = fh.Close()
+			return nil, err
+		}
+	}
+	dr := sse.DecryptRange(fh, key, prefix, firstChunk, intraSkip, length)
+	return &decCloser{r: dr, c: fh}, nil
+}
+
 type countReader struct {
 	r io.Reader
 	n int64

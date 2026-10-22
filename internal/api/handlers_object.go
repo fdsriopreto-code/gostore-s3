@@ -46,7 +46,17 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request, bucket,
 
 	opts := s.vopts(bucket, r)
 	opts.UserDefined = extractMetadata(r, key)
-	s.applyDefaultEncryption(bucket, opts.UserDefined)
+	// SSE-C: a customer-provided key encrypts this object; the server never
+	// stores it. Takes precedence over (and suppresses) default encryption.
+	if ck, cmd5, code := parseSSEC(r); code != ErrNone {
+		writeErrorResponse(w, r, code, "/"+bucket+"/"+key)
+		return
+	} else if ck != nil {
+		opts.SSECustomerKey = ck
+		opts.SSECustomerKeyMD5 = cmd5
+	} else {
+		s.applyDefaultEncryption(bucket, opts.UserDefined)
+	}
 	if v := r.Header.Get("x-amz-tagging"); v != "" {
 		opts.UserTags = v
 	}
@@ -125,9 +135,22 @@ func (s *Server) getOrHeadObject(w http.ResponseWriter, r *http.Request, bucket,
 	res := "/" + bucket + "/" + key
 	gopts := s.vopts(bucket, r)
 
+	// SSE-C: carry the customer key to the backend for decryption.
+	ck, cmd5, code := parseSSEC(r)
+	if code != ErrNone {
+		writeErrorResponse(w, r, code, res)
+		return
+	}
+	ssec := ck != nil
+	if ssec {
+		gopts.SSECustomerKey = ck
+		gopts.SSECustomerKeyMD5 = cmd5
+	}
+
 	// Hot-object cache fast path: whole-object GET/HEAD of the current version,
-	// served from RAM with no backend call.
-	cacheable := gopts.VersionID == "" && r.Header.Get("Range") == ""
+	// served from RAM with no backend call. SSE-C objects are NEVER cached —
+	// the plaintext must never be reachable without presenting the key.
+	cacheable := gopts.VersionID == "" && r.Header.Get("Range") == "" && !ssec
 	if cacheable && s.ocache.enabled() {
 		if e, ok := s.ocache.get(cacheKey(bucket, key, "")); ok {
 			if objectHasExpired(e.info.UserDefined, time.Now()) {
@@ -159,6 +182,20 @@ func (s *Server) getOrHeadObject(w http.ResponseWriter, r *http.Request, bucket,
 		}()
 		writeErrorResponse(w, r, ErrNoSuchKey, res)
 		return
+	}
+
+	// SSE-C: an object stored with a customer key can only be read (GET or
+	// HEAD) by presenting that same key. Validate here so HEAD — which never
+	// calls the decrypting read path — is enforced too.
+	if objMD5 := oi.UserDefined["x-amz-server-side-encryption-customer-key-md5"]; objMD5 != "" {
+		if !ssec {
+			writeErrorResponse(w, r, ErrInvalidRequest, res)
+			return
+		}
+		if cmd5 != objMD5 {
+			writeErrorResponse(w, r, ErrAccessDenied, res)
+			return
+		}
 	}
 
 	switch condStatus := evalGetConditionals(r, oi); condStatus {
@@ -208,7 +245,7 @@ func (s *Server) getOrHeadObject(w http.ResponseWriter, r *http.Request, bucket,
 	}
 	// Fill the hot-object cache on a full read of an eligible small object:
 	// buffer it once, serve it, and keep the copy in RAM.
-	if rng == nil && s.ocache.eligibleSize(oi.Size) {
+	if rng == nil && !ssec && s.ocache.eligibleSize(oi.Size) {
 		body, rerr := io.ReadAll(gr)
 		w.WriteHeader(status)
 		_, _ = w.Write(body)
@@ -294,6 +331,12 @@ func (s *Server) handleCopyObject(w http.ResponseWriter, r *http.Request, bucket
 		writeErrorResponse(w, r, ErrInvalidArgument, "/"+bucket+"/"+key)
 		return
 	}
+	// SSE-C copy (source or dest) is not supported yet.
+	if r.Header.Get("x-amz-server-side-encryption-customer-algorithm") != "" ||
+		r.Header.Get("x-amz-copy-source-server-side-encryption-customer-algorithm") != "" {
+		writeErrorResponse(w, r, ErrNotImplemented, "/"+bucket+"/"+key)
+		return
+	}
 
 	// The caller must be allowed to READ the source, not just write the
 	// destination — otherwise a key with write access to one bucket could
@@ -363,6 +406,12 @@ func writeObjectHeaders(w http.ResponseWriter, oi object.ObjectInfo, region stri
 		}
 		if lk == "x-amz-server-side-encryption" {
 			h.Set("x-amz-server-side-encryption", v)
+			continue
+		}
+		// SSE-C response headers (algorithm + key MD5) are real headers, not
+		// user metadata.
+		if strings.HasPrefix(lk, "x-amz-server-side-encryption-customer-") {
+			h.Set(lk, v)
 			continue
 		}
 		h.Set("x-amz-meta-"+lk, v)

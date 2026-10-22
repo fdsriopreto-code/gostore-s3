@@ -65,7 +65,10 @@ func (f *FS) PutObject(ctx context.Context, bucket, obj string, data *object.Put
 	var sseMeta objMeta
 	var err error
 	encrypt := f.sseRequested(opts)
-	if encrypt {
+	ssec := len(opts.SSECustomerKey) == 32
+	if ssec {
+		tmp, n, md5hex, sseMeta, err = f.encryptToTmpSSEC(data, data.Size(), opts.SSECustomerKey, opts.SSECustomerKeyMD5)
+	} else if encrypt {
 		tmp, n, md5hex, sseMeta, err = f.encryptToTmp(data, data.Size())
 	} else {
 		tmp, n, md5hex, err = f.copyToTmpAndHash(data, data.Size())
@@ -93,13 +96,14 @@ func (f *FS) PutObject(ctx context.Context, bucket, obj string, data *object.Put
 		UserMeta:    stripReserved(opts.UserDefined),
 		UserTags:    opts.UserTags,
 	}
-	if encrypt {
+	if ssec || encrypt {
 		st, _ := os.Stat(dataPath)
 		m.Size = st.Size()
 		m.SSE = sseMeta.SSE
 		m.PlainSize = sseMeta.PlainSize
 		m.EncDEK = sseMeta.EncDEK
 		m.NoncePrefix = sseMeta.NoncePrefix
+		m.SSECKeyMD5 = sseMeta.SSECKeyMD5
 	}
 	if err := writeMetaFile(f.objMetaPath(bucket, obj), m); err != nil {
 		return object.ObjectInfo{}, err
@@ -231,7 +235,21 @@ func (f *FS) GetObjectNInfo(_ context.Context, bucket, obj string, rs *object.HT
 				}
 				oi.Size = length
 			}
-			rc, derr := f.openDecrypting(f.objDataPath(bucket, obj), m, start, length)
+			var rc io.ReadCloser
+			var derr error
+			if m.SSE == "SSE-C" {
+				if len(opts.SSECustomerKey) != 32 {
+					lk.RUnlock(ctx2)
+					return nil, object.ErrSSECKeyRequired
+				}
+				if opts.SSECustomerKeyMD5 != m.SSECKeyMD5 {
+					lk.RUnlock(ctx2)
+					return nil, object.ErrSSECKeyMismatch
+				}
+				rc, derr = f.openDecryptingSSEC(f.objDataPath(bucket, obj), m, opts.SSECustomerKey, start, length)
+			} else {
+				rc, derr = f.openDecrypting(f.objDataPath(bucket, obj), m, start, length)
+			}
 			if derr != nil {
 				lk.RUnlock(ctx2)
 				return nil, derr

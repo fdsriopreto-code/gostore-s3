@@ -11,6 +11,15 @@ import (
 )
 
 func (s *Server) handleNewMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	if k, _, code := parseSSEC(r); code != ErrNone {
+		writeErrorResponse(w, r, code, "/"+bucket+"/"+key)
+		return
+	} else if k != nil {
+		// SSE-C multipart is not supported yet; reject rather than silently
+		// ignoring the customer key.
+		writeErrorResponse(w, r, ErrNotImplemented, "/"+bucket+"/"+key)
+		return
+	}
 	opts := object.ObjectOptions{UserDefined: extractMetadata(r, key)}
 	s.applyDefaultEncryption(bucket, opts.UserDefined)
 	if v := r.Header.Get("x-amz-tagging"); v != "" {

@@ -123,6 +123,12 @@ type ObjectOptions struct {
 	// Server-side encryption context (M11) — opaque for now.
 	ServerSideEncryption any
 
+	// SSE-C: a customer-provided 32-byte key for this request only. The
+	// server encrypts/decrypts with it and never stores it — only its MD5,
+	// to validate the key presented on read. Non-nil selects SSE-C.
+	SSECustomerKey    []byte
+	SSECustomerKeyMD5 string
+
 	// PartNumber, when non-zero, requests a single part of a multipart object.
 	PartNumber int
 }

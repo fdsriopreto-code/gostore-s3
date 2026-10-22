@@ -45,6 +45,10 @@ func toAPIError(err error) APIErrorCode {
 		return ErrObjectLockConflict
 	case errors.Is(err, object.ErrNotVersioned):
 		return ErrInvalidBucketState
+	case errors.Is(err, object.ErrSSECKeyRequired):
+		return ErrInvalidRequest
+	case errors.Is(err, object.ErrSSECKeyMismatch):
+		return ErrAccessDenied
 	case errors.Is(err, object.ErrNotImplemented):
 		return ErrNotImplemented
 	case errors.Is(err, object.ErrStorageFull):

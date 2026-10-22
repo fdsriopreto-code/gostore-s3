@@ -29,6 +29,11 @@ type objMeta struct {
 	PlainSize   int64  `json:"plainSize,omitempty"`
 	EncDEK      string `json:"encDEK,omitempty"`      // hex, master-key-wrapped data key
 	NoncePrefix string `json:"noncePrefix,omitempty"` // hex, 4 bytes
+
+	// SSE-C: when SSE == "SSE-C" the data key is the customer-provided key
+	// (never stored); SSECKeyMD5 is its base64 MD5, used to reject a read
+	// presenting the wrong key. EncDEK is empty for SSE-C.
+	SSECKeyMD5 string `json:"sseCKeyMD5,omitempty"`
 }
 
 type objMetaPart struct {
@@ -62,7 +67,12 @@ func (m objMeta) toObjectInfo(bucket, name string) object.ObjectInfo {
 	if m.ContentType != "" {
 		oi.UserDefined["content-type"] = m.ContentType
 	}
-	if m.SSE != "" {
+	if m.SSE == "SSE-C" {
+		oi.UserDefined["x-amz-server-side-encryption-customer-algorithm"] = "AES256"
+		if m.SSECKeyMD5 != "" {
+			oi.UserDefined["x-amz-server-side-encryption-customer-key-md5"] = m.SSECKeyMD5
+		}
+	} else if m.SSE != "" {
 		oi.UserDefined["x-amz-server-side-encryption"] = m.SSE
 	}
 	for _, p := range m.Parts {
