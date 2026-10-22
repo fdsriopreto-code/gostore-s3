@@ -78,3 +78,46 @@ func TestBackupRestoreFromTier(t *testing.T) {
 }
 
 func context_TODO() context.Context { return context.Background() }
+
+func TestBackupVerifyDetectsMissing(t *testing.T) {
+	// Mock tier: one object is backed up (HEAD 200, size match), the other
+	// is not (HEAD 404).
+	mux := http.NewServeMux()
+	mux.HandleFunc("/remote/vbk/have.txt", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "5") // matches the local object size
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/remote/vbk/missing.txt", func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	erasure.RegisterTier("verifytest", &remotes3.Client{
+		Endpoint: srv.URL, Region: "us-east-1", Bucket: "remote", Access: "k", Secret: "s",
+	})
+
+	backend, err := fsb.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := backend.MakeBucket(context_TODO(), "vbk", object.MakeBucketOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"have.txt", "missing.txt"} {
+		pr := object.NewPutObjReader(strings.NewReader("hello"), 5, 5)
+		if _, err := backend.PutObject(context_TODO(), "vbk", k, pr, object.ObjectOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	job := newBackupJob(backend)
+	if err := job.setConfig(backupConfig{Enabled: true, Tier: "verifytest"}); err != nil {
+		t.Fatal(err)
+	}
+	job.verify(context_TODO())
+
+	vs := job.verifyStat.Load()
+	if vs == nil || vs.Checked != 2 || vs.OK != 1 || vs.MissingRemote != 1 {
+		t.Fatalf("verify status: %+v (want checked=2 ok=1 missingRemote=1)", vs)
+	}
+}

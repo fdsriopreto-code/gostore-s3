@@ -131,6 +131,8 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		s.handleAdminBackupRun(w, r)
 	case path == "backup/restore" && r.Method == http.MethodPost:
 		s.handleAdminBackupRestore(w, r)
+	case path == "backup/verify" && r.Method == http.MethodPost:
+		s.handleAdminBackupVerify(w, r)
 	case path == "replication/backfill" && r.Method == http.MethodPost:
 		s.handleAdminReplicationBackfill(w, r)
 	case path == "replication" && r.Method == http.MethodGet:

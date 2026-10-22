@@ -1407,11 +1407,23 @@ async function viewMonitoring(v) {
         }, "Back up now"),
         el("button", {
           class: "ghost sm", disabled: tiers.length ? null : "disabled",
+          onclick: async () => { try { await must(await api("POST", "/gostore/admin/v1/backup/verify")); toast("Verify started — watch the status", "ok"); setTimeout(render, 1500); } catch (e) { toast(e.message, "err"); } }
+        }, "Verify backup"),
+        el("button", {
+          class: "ghost sm", disabled: tiers.length ? null : "disabled",
           onclick: async () => {
             if (!confirm("Restore from the backup tier?\n\nThis pulls objects that are MISSING locally back from the remote backup — for disaster recovery. Existing local objects are NOT overwritten.")) return;
             try { await must(await api("POST", "/gostore/admin/v1/backup/restore")); toast("Restore started — watch the status", "ok"); setTimeout(render, 1500); } catch (e) { toast(e.message, "err"); }
           }
         }, "Restore from tier"))));
+    if (bk.verify) {
+      const vs = bk.verify;
+      const bad = (vs.mismatched || 0) + (vs.missingRemote || 0);
+      bc.append(el("p", { class: "muted small", style: bad > 0 ? "color:var(--red)" : "" },
+        (vs.running ? "Verifying… " : "Last verify: ") +
+        `${vs.ok || 0} ok, ${vs.mismatched || 0} mismatched, ${vs.missingRemote || 0} not backed up (of ${vs.checked || 0} checked)` +
+        (vs.lastError ? " — " + vs.lastError : "")));
+    }
     if (bk.restore) {
       const rs = bk.restore;
       bc.append(el("p", { class: "muted small" },
@@ -1464,6 +1476,19 @@ async function viewMonitoring(v) {
     }
     bc.append(el("p", { class: "muted small" }, "Incremental: an object is skipped when the tier already holds it at the same size. Runs are single-flight and survive restarts. Backups are plain S3 objects on the remote — restore with any S3 client."));
     v.append(bc);
+  } catch {}
+
+  // --- Replication ---
+  try {
+    const rep = await (await api("GET", "/gostore/admin/v1/replication")).json();
+    const rc = el("div", { class: "card", style: "margin:20px 0" });
+    rc.append(el("h3", { style: "margin:0 0 8px;font-size:15px" }, "Replication"));
+    const pend = rep.pending || 0;
+    rc.append(el("p", { class: "muted small", style: pend > 0 ? "color:var(--amber)" : "" },
+      pend === 0 ? "Queue empty — all replicated." : `${pend} event${pend === 1 ? "" : "s"} pending in the durable retry queue.`));
+    rc.append(el("p", { class: "muted small" }, "Rules are set per bucket (Settings → ?replication). To replicate objects written before a rule existed, run backfill: ",
+      el("code", {}, "POST /gostore/admin/v1/replication/backfill?bucket=NAME"), "."));
+    v.append(rc);
   } catch {}
 
   let du = null;
