@@ -438,6 +438,8 @@ Cert em `<volume>/.gostore.sys/acme/`. Exponha 80 e 443.
 | `GOSTORE_MAX_INFLIGHT_BYTES` | `512MiB` | teto de corpo de request em voo → `503 SlowDown` |
 | `GOSTORE_RATE_LIMIT` / `_BURST` | — | token bucket por access key |
 | `GOSTORE_IDLE_TIMEOUT` | `90s` | mata upload travado que prende lock |
+| `GOSTORE_TRUSTED_PROXIES` | loopback + ranges privados | CIDRs/IPs cujo `X-Forwarded-For` é confiável (fonte do IP p/ `IpAddress` nas policies e rate-limit); fora disso o header é ignorado (anti-spoof) |
+| `GOSTORE_COPY_SOURCE_AUTHZ` | `enforce` | `enforce`/`warn`/`off` — exige (ou só avisa) permissão de leitura na origem de `CopyObject` |
 
 ### Storage / erasure
 
@@ -595,6 +597,13 @@ as chaves `bench/…` são limpas no fim. Pra carga distribuída mais pesada, o
 - **Criptografia em repouso**: SSE-S3 (`x-amz-server-side-encryption: AES256`)
   com AES-256-GCM em chunks de 64 KiB; DEK envelopada pela master key local ou
   pelo Vault Transit.
+- **IAM cifrado em repouso**: o `store.json` (usuários, service accounts,
+  secret keys) é gravado cifrado com a master key do KMS — um `store.json`
+  vazado (backup, leitura de disco) é inútil sem a chave. Store plaintext de
+  versões antigas é migrado automaticamente no primeiro boot.
+- **Anti-spoof de IP**: `X-Forwarded-For` só é respeitado vindo de um proxy
+  confiável (`GOSTORE_TRUSTED_PROXIES`, default loopback + ranges privados),
+  então um cliente não falsifica o IP de origem usado nas policies/rate-limit.
 - **Object Lock (WORM)** GOVERNANCE/COMPLIANCE + legal hold, com enforcement no
   delete e bypass só com `s3:BypassGovernanceRetention`.
 - **Auditoria hash-encadeada** de toda mutação — adulteração é detectável.

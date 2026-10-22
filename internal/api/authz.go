@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/lojadopocket/gostore/internal/iam/policy"
@@ -137,37 +138,91 @@ func accessKeyFrom(r *http.Request) string {
 	return ""
 }
 
+// clientIP returns the caller's source IP, used for IpAddress policy
+// conditions and per-IP rate limiting. X-Forwarded-For is only honoured when
+// the direct peer (RemoteAddr) is a trusted proxy — otherwise any client
+// could spoof its source IP just by sending the header. When trusted, the
+// header is walked right-to-left skipping further trusted proxies, so the
+// first untrusted hop (the address the edge proxy actually saw) wins and a
+// client cannot forge it by prepending entries.
 func clientIP(r *http.Request) string {
-	if h := r.Header.Get("X-Forwarded-For"); h != "" {
-		if i := indexByteStr(h, ','); i >= 0 {
-			return trimSpace(h[:i])
-		}
-		return trimSpace(h)
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	if !isTrustedProxy(net.ParseIP(host)) {
+		return host
+	}
+	xff := r.Header.Get("X-Forwarded-For")
+	if xff == "" {
+		return host
+	}
+	parts := strings.Split(xff, ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		ipStr := strings.TrimSpace(parts[i])
+		ip := net.ParseIP(ipStr)
+		if ip == nil || isTrustedProxy(ip) {
+			continue
+		}
+		return ipStr
 	}
 	return host
 }
 
-func indexByteStr(s string, b byte) int {
-	for i := 0; i < len(s); i++ {
-		if s[i] == b {
-			return i
+var (
+	trustedProxyOnce sync.Once
+	trustedProxyNets []*net.IPNet
+)
+
+// isTrustedProxy reports whether ip is an allowed reverse proxy, so its
+// X-Forwarded-For may be believed. GOSTORE_TRUSTED_PROXIES overrides the set
+// (comma-separated CIDRs or bare IPs). Unset, it defaults to loopback and the
+// private ranges, which is where a reverse proxy (nginx/Traefik/PaaS) sits —
+// a spoofing client on the public internet has a public RemoteAddr and is
+// therefore never trusted.
+func isTrustedProxy(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	trustedProxyOnce.Do(func() {
+		v := strings.TrimSpace(os.Getenv("GOSTORE_TRUSTED_PROXIES"))
+		if v == "" {
+			for _, c := range []string{
+				"127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12",
+				"192.168.0.0/16", "169.254.0.0/16", "fc00::/7", "fe80::/10",
+			} {
+				if _, n, err := net.ParseCIDR(c); err == nil {
+					trustedProxyNets = append(trustedProxyNets, n)
+				}
+			}
+			return
+		}
+		for _, part := range strings.Split(v, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			if !strings.Contains(part, "/") {
+				if pip := net.ParseIP(part); pip != nil {
+					bits := 128
+					if pip.To4() != nil {
+						bits = 32
+					}
+					trustedProxyNets = append(trustedProxyNets, &net.IPNet{IP: pip, Mask: net.CIDRMask(bits, bits)})
+				}
+				continue
+			}
+			if _, n, err := net.ParseCIDR(part); err == nil {
+				trustedProxyNets = append(trustedProxyNets, n)
+			}
+		}
+	})
+	for _, n := range trustedProxyNets {
+		if n.Contains(ip) {
+			return true
 		}
 	}
-	return -1
-}
-
-func trimSpace(s string) string {
-	for len(s) > 0 && (s[0] == ' ' || s[0] == '\t') {
-		s = s[1:]
-	}
-	for len(s) > 0 && (s[len(s)-1] == ' ' || s[len(s)-1] == '\t') {
-		s = s[:len(s)-1]
-	}
-	return s
+	return false
 }
 
 // s3Action maps an HTTP request to its S3 IAM action name.

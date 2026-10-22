@@ -104,7 +104,10 @@ func (m *Manager) compileInline(accessKey, doc string) *policy.Policy {
 
 // New builds a Manager with the given root credential, persisting through the
 // configstore backend (an object replicated across the cluster).
-func New(rootAccess, rootSecret string, be configstore.Backend) (*Manager, error) {
+// New builds a Manager. enc, when non-nil, encrypts the IAM store at rest
+// (and a legacy plaintext store is migrated to encrypted form on first boot).
+// Pass nil to keep the store in plaintext.
+func New(rootAccess, rootSecret string, be configstore.Backend, enc Cipher) (*Manager, error) {
 	m := &Manager{
 		rootAccess:  rootAccess,
 		rootSecret:  rootSecret,
@@ -113,14 +116,23 @@ func New(rootAccess, rootSecret string, be configstore.Backend) (*Manager, error
 		custom:      map[string]*policy.Policy{},
 		builtin:     policy.Builtin(),
 		sts:         map[string]stsRec{},
-		store:       newStore(be),
+		store:       newStore(be, enc),
 		inlineCache: map[string]inlineCompiled{},
 	}
-	p, err := m.store.load()
+	p, res, err := m.store.load()
 	if err != nil {
 		return nil, err
 	}
 	m.applyPersisted(p)
+	// Migrate an existing plaintext store to encrypted-at-rest the first time
+	// we boot with a KMS, so upgrades don't need any manual step.
+	if enc != nil && res.existed && !res.encrypted {
+		if ferr := m.flush(); ferr != nil {
+			logger.Warn("iam: could not migrate store to encrypted-at-rest", "err", ferr)
+		} else {
+			logger.Info("iam: migrated store to encrypted-at-rest")
+		}
+	}
 	return m, nil
 }
 
@@ -161,7 +173,7 @@ func (m *Manager) StartRefresh(ctx context.Context, interval time.Duration) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				p, err := m.store.load()
+				p, _, err := m.store.load()
 				if err != nil {
 					continue
 				}
