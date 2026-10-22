@@ -352,6 +352,13 @@ button.primary:hover{filter:brightness(1.06)}
 .ub .ubt>span{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent),#8b5cf6);transition:width .5s cubic-bezier(.4,0,.2,1)}
 .ub .ubv{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
 @media(max-width:860px){.ub{grid-template-columns:92px 1fr auto;gap:8px}}
+
+/* collapsible endpoint card */
+.hero-head{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+.hero-head .hero-chev{display:inline-flex;color:var(--muted);transition:transform .2s,color .12s}
+.hero-head .hero-chev.open{transform:rotate(90deg)}
+.hero-head:hover .hero-chev{color:var(--text)}
+.hero .kvbig{transition:opacity .15s}
 </style>
 </head>
 <body>
