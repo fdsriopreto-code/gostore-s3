@@ -289,8 +289,16 @@ func (s *Server) notify(r *http.Request, kind event.Kind, bucket, key string, si
 func (s *Server) handleCopyObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	src := r.Header.Get("x-amz-copy-source")
 	srcBucket, srcKey, ok := parseCopySource(src)
-	if !ok {
+	if !ok || !validBucket(srcBucket) || !validObjectKey(srcKey) || !validObjectKey(key) {
 		writeErrorResponse(w, r, ErrInvalidArgument, "/"+bucket+"/"+key)
+		return
+	}
+
+	// The caller must be allowed to READ the source, not just write the
+	// destination — otherwise a key with write access to one bucket could
+	// copy (and then read) any object from any bucket.
+	if code := s.authorizeCopySource(r, accessKeyFrom(r), srcBucket, srcKey); code != ErrNone {
+		writeErrorResponse(w, r, code, "/"+srcBucket+"/"+srcKey)
 		return
 	}
 

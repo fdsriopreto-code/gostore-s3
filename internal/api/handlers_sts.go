@@ -73,12 +73,24 @@ func (s *Server) handleAssumeRole(w http.ResponseWriter, r *http.Request, caller
 	tmpSK := storage.NewID() + storage.NewID()[:8]
 	exp := time.Now().UTC().Add(time.Duration(dur) * time.Second)
 
-	// parentUser: if the caller is itself a temp/svc identity, chain to its parent.
+	// parentUser: if the caller is itself a temp/svc identity, chain to its
+	// parent so the parent's named policies resolve. bound carries the
+	// caller's own ceiling (a service account's inline policy, or a bounded
+	// STS's ceiling) so the issued credential can never exceed what the caller
+	// itself could do — even when the parent is root.
 	parent := caller
-	if id, ok := s.iam.Identity(caller); ok && id.ParentUser != "" {
-		parent = id.ParentUser
+	var bound *policy.Policy
+	if id, ok := s.iam.Identity(caller); ok {
+		if id.ParentUser != "" {
+			parent = id.ParentUser
+		}
+		if id.Inline != nil {
+			bound = id.Inline
+		} else if id.Bound != nil {
+			bound = id.Bound
+		}
 	}
-	s.iam.AddSTS(tmpAK, tmpSK, parent, inline, time.Until(exp))
+	s.iam.AddSTS(tmpAK, tmpSK, parent, inline, bound, time.Until(exp))
 
 	var res assumeRoleResult
 	res.Credentials.AccessKeyID = tmpAK

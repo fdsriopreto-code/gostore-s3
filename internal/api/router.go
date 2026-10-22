@@ -36,6 +36,14 @@ type Server struct {
 	backup   *backupJob
 
 	domainNames []string
+
+	// copySrcAuthz controls the CopyObject/UploadPartCopy source-read check:
+	//   "enforce" (default) — deny a copy whose caller cannot read the source;
+	//   "warn"              — allow it but log a warning (safe rollout on an
+	//                         existing deployment: observe, fix policies, then
+	//                         switch to enforce);
+	//   "off"               — skip the check entirely (not recommended).
+	copySrcAuthz string
 }
 
 type ctxKeyAccessKey struct{}
@@ -69,6 +77,14 @@ func NewServer(cfg config.Config, obj object.Layer, im *iam.Manager, bc *bucketc
 				s.domainNames = append(s.domainNames, d)
 			}
 		}
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("GOSTORE_COPY_SOURCE_AUTHZ"))) {
+	case "warn":
+		s.copySrcAuthz = "warn"
+	case "off":
+		s.copySrcAuthz = "off"
+	default:
+		s.copySrcAuthz = "enforce"
 	}
 
 	mux := http.NewServeMux()

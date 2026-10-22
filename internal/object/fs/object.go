@@ -334,6 +334,9 @@ func (f *FS) DeleteObject(ctx context.Context, bucket, obj string, opts object.O
 	if err := f.ensureBucket(bucket); err != nil {
 		return object.ObjectInfo{}, err
 	}
+	if !validObjectName(obj) {
+		return object.ObjectInfo{}, object.ErrObjectNameInvalid
+	}
 	if opts.Versioned || opts.VersionSuspended || opts.VersionID != "" {
 		return f.deleteVersion(ctx, bucket, obj, opts.VersionID, opts.VersionSuspended, opts.BypassGovernance)
 	}

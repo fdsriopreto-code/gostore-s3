@@ -33,6 +33,7 @@ type Identity struct {
 	IsRoot     bool
 	Policies   []string       // named policies in effect
 	Inline     *policy.Policy // session/inline policy (intersection semantics)
+	Bound      *policy.Policy // hard ceiling carried from the issuing identity
 	Expiry     time.Time      // zero == no expiry
 }
 
@@ -66,7 +67,8 @@ type Manager struct {
 type stsRec struct {
 	secret     string
 	parentUser string
-	pol        *policy.Policy
+	pol        *policy.Policy // session policy supplied to AssumeRole (optional)
+	bound      *policy.Policy // ceiling inherited from the issuing identity
 	expiry     time.Time
 }
 
@@ -244,7 +246,7 @@ func (m *Manager) Identity(accessKey string) (*Identity, bool) {
 		return id, true
 	}
 	if s, ok := m.sts[accessKey]; ok && time.Now().Before(s.expiry) {
-		id := &Identity{AccessKey: accessKey, SecretKey: s.secret, ParentUser: s.parentUser, Inline: s.pol, Expiry: s.expiry}
+		id := &Identity{AccessKey: accessKey, SecretKey: s.secret, ParentUser: s.parentUser, Inline: s.pol, Bound: s.bound, Expiry: s.expiry}
 		if pu, ok := m.users[s.parentUser]; ok {
 			id.Policies = pu.Policies
 		} else if s.parentUser == m.rootAccess {
@@ -262,15 +264,22 @@ func (m *Manager) IsAllowed(accessKey string, args policy.Args) bool {
 		return false
 	}
 	args.AccountName = accessKey
-	if id.IsRoot && id.Inline == nil {
+	if id.IsRoot && id.Inline == nil && id.Bound == nil {
 		return true
 	}
 	// Inline (session) policy must allow, if present.
 	if id.Inline != nil && !id.Inline.IsAllowed(args) {
 		return false
 	}
+	// Bound is the ceiling inherited from the identity that issued this
+	// credential (e.g. the inline policy of the service account that called
+	// AssumeRole). It must allow too — a temporary credential can never grant
+	// more than the identity that minted it, even when the parent is root.
+	if id.Bound != nil && !id.Bound.IsAllowed(args) {
+		return false
+	}
 	if id.IsRoot {
-		return true // inline already checked
+		return true // inline + bound already checked
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -480,11 +489,14 @@ func (m *Manager) ListServiceAccounts(parentUser string) []SvcAcctInfo {
 
 // --- STS (M9) ------------------------------------------------
 
-// AddSTS registers a temporary credential in memory.
-func (m *Manager) AddSTS(accessKey, secretKey, parentUser string, pol *policy.Policy, ttl time.Duration) {
+// AddSTS registers a temporary credential in memory. pol is the optional
+// session policy supplied to AssumeRole; bound is the ceiling inherited from
+// the caller (e.g. a service account's inline policy) and is enforced in
+// addition to the parent's named policies so STS can never escalate.
+func (m *Manager) AddSTS(accessKey, secretKey, parentUser string, pol, bound *policy.Policy, ttl time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.sts[accessKey] = stsRec{secret: secretKey, parentUser: parentUser, pol: pol, expiry: time.Now().Add(ttl)}
+	m.sts[accessKey] = stsRec{secret: secretKey, parentUser: parentUser, pol: pol, bound: bound, expiry: time.Now().Add(ttl)}
 }
 
 // RootAccessKey returns the configured root access key.

@@ -260,14 +260,25 @@ func (s *Server) handleDeleteObjects(w http.ResponseWriter, r *http.Request, buc
 		writeErrorResponse(w, r, ErrMalformedXML, "/"+bucket)
 		return
 	}
-	objs := make([]object.ObjectToDelete, len(req.Objects))
+	// errs is indexed by the original request order. Keys that would escape
+	// the bucket (../, leading /) or reach the reserved system namespace are
+	// rejected here and never reach the backend; the valid remainder is
+	// deleted in one batch and its results scattered back into place.
+	errs := make([]error, len(req.Objects))
+	var valid []object.ObjectToDelete
+	var validIdx []int
 	for i, o := range req.Objects {
-		objs[i] = object.ObjectToDelete{ObjectName: o.Key, VersionID: o.VersionID}
+		if !validObjectKey(o.Key) {
+			errs[i] = object.ErrObjectNameInvalid
+			continue
+		}
+		validIdx = append(validIdx, i)
+		valid = append(valid, object.ObjectToDelete{ObjectName: o.Key, VersionID: o.VersionID})
 	}
-	deleted, errs := s.obj.DeleteObjects(r.Context(), bucket, objs, object.ObjectOptions{})
-	for i := range objs {
-		if errs[i] == nil {
-			s.ocache.evict(bucket, objs[i].ObjectName, "")
+	if len(valid) > 0 {
+		_, derrs := s.obj.DeleteObjects(r.Context(), bucket, valid, object.ObjectOptions{})
+		for j, orig := range validIdx {
+			errs[orig] = derrs[j]
 		}
 	}
 
@@ -278,8 +289,9 @@ func (s *Server) handleDeleteObjects(w http.ResponseWriter, r *http.Request, buc
 			res.Errors = append(res.Errors, deleteErrorXML{Key: o.Key, Code: ae.Code, Message: ae.Description})
 			continue
 		}
+		s.ocache.evict(bucket, o.Key, "")
 		if !req.Quiet {
-			res.Deleted = append(res.Deleted, deletedXML{Key: deleted[i].ObjectName})
+			res.Deleted = append(res.Deleted, deletedXML{Key: o.Key})
 		}
 	}
 	writeXML(w, http.StatusOK, res)
