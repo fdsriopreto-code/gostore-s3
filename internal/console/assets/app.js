@@ -657,6 +657,7 @@ async function bucketObjects(v, b) {
   const tb = el("div", { class: "toolbar" },
     el("div", { class: "search" }, ic(ICON.search), sInput),
     el("button", { class: "ghost", onclick: render }, ic(ICON.refresh)),
+    el("button", { class: "ghost", onclick: () => folderStats(b, bucketPrefix) }, ic(ICON.gauge), "Folder stats"),
     el("div", { class: "grow" }),
     el("button", { class: "ghost", onclick: async () => {
       const k = prompt("Key for the upload link (relative to this folder):", "");
@@ -991,6 +992,77 @@ async function objectDrawer(b, o) {
   });
 }
 const t = (node, tag) => node.getElementsByTagName(tag)[0]?.textContent || "";
+
+// file-type classification for the folder-stats breakdown
+const FILE_TYPES = [
+  ["Images", ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "tiff", "tif", "heic", "heif", "avif", "ico"]],
+  ["Videos", ["mp4", "mov", "avi", "mkv", "webm", "flv", "wmv", "m4v", "mpg", "mpeg", "3gp"]],
+  ["Audio", ["mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "opus"]],
+  ["PDF", ["pdf"]],
+  ["Documents", ["doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv", "md", "rtf", "odt", "pages"]],
+  ["Data", ["json", "xml", "yaml", "yml", "sql", "log", "ndjson", "parquet"]],
+  ["Archives", ["zip", "gz", "tar", "rar", "7z", "bz2", "xz", "tgz"]],
+];
+function classifyKey(key) {
+  const i = key.lastIndexOf(".");
+  if (i < 0 || i === key.length - 1) return "Other";
+  const ext = key.slice(i + 1).toLowerCase();
+  for (const [name, exts] of FILE_TYPES) if (exts.includes(ext)) return name;
+  return "Other";
+}
+
+// folderStats walks a prefix recursively and shows a count/size breakdown by
+// file type in a drawer.
+async function folderStats(b, prefix) {
+  openDrawer((d) => {
+    d.append(el("div", { class: "dh" }, ic(ICON.gauge),
+      el("h3", {}, "Folder stats"),
+      el("button", { class: "ghost iconbtn", onclick: closeDrawer }, "✕")));
+    const body = el("div", { class: "db" });
+    const loc = prefix ? b + "/" + prefix : b;
+    const status = el("p", { class: "muted small" }, "Scanning " + loc + " …");
+    body.append(status);
+    d.append(body);
+    (async () => {
+      const cats = {};
+      let total = 0, totalSize = 0, token = "";
+      try {
+        do {
+          const q = { "list-type": "2", "max-keys": "1000" };
+          if (prefix) q.prefix = prefix;
+          if (token) q["continuation-token"] = token;
+          const doc = parseXml(await (await api("GET", "/" + b, { query: q })).text());
+          for (const c of doc.getElementsByTagName("Contents")) {
+            const k = t(c, "Key");
+            if (k.endsWith("/")) continue;
+            const sz = +t(c, "Size");
+            const cat = classifyKey(k);
+            if (!cats[cat]) cats[cat] = { n: 0, size: 0 };
+            cats[cat].n++; cats[cat].size += sz;
+            total++; totalSize += sz;
+          }
+          token = t(doc, "IsTruncated") === "true" ? t(doc, "NextContinuationToken") : "";
+          status.textContent = "Scanning " + loc + " … " + total.toLocaleString() + " files";
+        } while (token && total < 200000);
+      } catch (e) { body.innerHTML = ""; body.append(el("p", { class: "muted" }, "Failed: " + e.message)); return; }
+      body.innerHTML = "";
+      body.append(el("div", { class: "kv" },
+        el("span", { class: "k" }, "Location"), el("span", { class: "v" }, loc),
+        el("span", { class: "k" }, "Files"), el("span", { class: "v" }, total.toLocaleString()),
+        el("span", { class: "k" }, "Total size"), el("span", { class: "v" }, fmtSize(totalSize))));
+      if (!total) { body.append(emptyState(ICON.bucket, "Empty", "No files under this prefix.")); return; }
+      const order = [...FILE_TYPES.map((x) => x[0]), "Other"].filter((c) => cats[c]);
+      const max = Math.max(1, ...order.map((c) => cats[c].n));
+      const bars = el("div", { class: "usebars", style: "margin-top:6px" });
+      for (const c of order) bars.append(el("div", { class: "ub" },
+        el("div", { class: "ubn" }, c),
+        el("div", { class: "ubt" }, el("span", { style: "width:" + Math.max(3, Math.round(cats[c].n / max * 100)) + "%" })),
+        el("div", { class: "ubv" }, cats[c].n.toLocaleString() + " · " + fmtSize(cats[c].size))));
+      body.append(bars);
+      if (total >= 200000) body.append(el("p", { class: "muted small" }, "Stopped at 200k files."));
+    })();
+  });
+}
 
 async function bucketSettings(v, b) {
   const sec = (title, ...nodes) => { v.append(el("h3", { style: "margin:24px 0 8px;font-size:15px" }, title)); nodes.forEach((n) => v.append(n)); };
