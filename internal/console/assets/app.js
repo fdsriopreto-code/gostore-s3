@@ -471,23 +471,40 @@ async function viewDashboard(v) {
   if (info.dataInitialized) tile("Storage initialized", relTime(info.dataInitialized), ICON.clock);
   v.append(tiles);
 
-  // Live activity metrics (observability) — read-only, best-effort.
+  // Live activity metrics (observability) — read-only, auto-refreshing every
+  // 5s via the shared poll timers (stopPolls() clears them on navigation).
   try {
     const mx = await (await api("GET", "/gostore/admin/v1/metrics")).json();
     if (seq !== renderSeq) return;
     v.append(el("h3", { style: "margin:26px 0 8px;font-size:15px" }, "Activity"));
     const mrow = el("div", { class: "mrow" });
-    const cell = (k, val) => mrow.append(el("div", { class: "mcell" },
-      el("div", { class: "mk" }, k), el("div", { class: "mv", html: val })));
-    cell("Requests", (mx.requests || 0).toLocaleString());
-    cell("Avg latency", (mx.avgLatencyMs || 0).toFixed(1) + " <small>ms</small>");
-    cell("p95 latency", (mx.p95Ms || 0).toFixed(0) + " <small>ms</small>");
-    cell("Data in", fmtSize(mx.bytesIn || 0));
-    cell("Data out", fmtSize(mx.bytesOut || 0));
-    cell("Errors", (mx.errors || 0).toLocaleString());
-    cell("Uptime", fmtDuration(mx.uptimeSeconds || 0));
-    cell("Goroutines", (mx.goroutines || 0).toLocaleString());
+    const cells = {};
+    const cell = (id, k) => {
+      const mv = el("div", { class: "mv" });
+      cells[id] = mv;
+      mrow.append(el("div", { class: "mcell" }, el("div", { class: "mk" }, k), mv));
+    };
+    cell("req", "Requests"); cell("avg", "Avg latency"); cell("p95", "p95 latency");
+    cell("in", "Data in"); cell("out", "Data out"); cell("err", "Errors");
+    cell("up", "Uptime"); cell("gr", "Goroutines");
+    const fill = (m) => {
+      cells.req.textContent = (m.requests || 0).toLocaleString();
+      cells.avg.innerHTML = (m.avgLatencyMs || 0).toFixed(1) + " <small>ms</small>";
+      cells.p95.innerHTML = (m.p95Ms || 0).toFixed(0) + " <small>ms</small>";
+      cells.in.textContent = fmtSize(m.bytesIn || 0);
+      cells.out.textContent = fmtSize(m.bytesOut || 0);
+      cells.err.textContent = (m.errors || 0).toLocaleString();
+      cells.up.textContent = fmtDuration(m.uptimeSeconds || 0);
+      cells.gr.textContent = (m.goroutines || 0).toLocaleString();
+    };
+    fill(mx);
     v.append(mrow);
+    pollTimers.push(setInterval(async () => {
+      try {
+        const m = await (await api("GET", "/gostore/admin/v1/metrics")).json();
+        if (seq === renderSeq) fill(m);
+      } catch {}
+    }, 5000));
   } catch {}
 
   // Storage by bucket — relative bars from the scanner's accounting.
