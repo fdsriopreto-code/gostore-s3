@@ -12,6 +12,7 @@ import (
 
 func (s *Server) handleNewMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	opts := object.ObjectOptions{UserDefined: extractMetadata(r, key)}
+	s.applyDefaultEncryption(bucket, opts.UserDefined)
 	if v := r.Header.Get("x-amz-tagging"); v != "" {
 		opts.UserTags = v
 	}

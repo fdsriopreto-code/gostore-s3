@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"encoding/xml"
+	"io"
 	"net/http"
 
 	"github.com/lojadopocket/gostore/internal/bucketcfg"
@@ -94,4 +96,69 @@ func (s *Server) handlePutBucketCompression(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeSuccessOK(w)
+}
+
+// --- default bucket encryption (?encryption) ---------------------------
+
+type sseConfigXML struct {
+	XMLName xml.Name `xml:"ServerSideEncryptionConfiguration"`
+	Rules   []struct {
+		Default struct {
+			Algorithm string `xml:"SSEAlgorithm"`
+		} `xml:"ApplyServerSideEncryptionByDefault"`
+	} `xml:"Rule"`
+}
+
+type sseConfigOut struct {
+	XMLName xml.Name `xml:"ServerSideEncryptionConfiguration"`
+	XMLNS   string   `xml:"xmlns,attr"`
+	Rule    struct {
+		Default struct {
+			Algorithm string `xml:"SSEAlgorithm"`
+		} `xml:"ApplyServerSideEncryptionByDefault"`
+	} `xml:"Rule"`
+}
+
+func (s *Server) handleGetBucketEncryption(w http.ResponseWriter, r *http.Request, bucket string) {
+	enc := s.bcfg.Get(bucket).Encryption
+	if enc == "" {
+		writeErrorResponse(w, r, ErrNoSuchEncryptionConfiguration, "/"+bucket)
+		return
+	}
+	var out sseConfigOut
+	out.XMLNS = s3XMLNS
+	out.Rule.Default.Algorithm = enc
+	writeXML(w, http.StatusOK, out)
+}
+
+func (s *Server) handlePutBucketEncryption(w http.ResponseWriter, r *http.Request, bucket string) {
+	b, err := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+	if err != nil {
+		writeErrorResponse(w, r, ErrInternalError, "/"+bucket)
+		return
+	}
+	var cfg sseConfigXML
+	if err := xml.Unmarshal(b, &cfg); err != nil || len(cfg.Rules) == 0 {
+		writeErrorResponse(w, r, ErrMalformedXML, "/"+bucket)
+		return
+	}
+	alg := cfg.Rules[0].Default.Algorithm
+	if alg != "AES256" {
+		// Only SSE-S3 (AES256) is supported as a default; aws:kms etc. are not.
+		writeErrorResponse(w, r, ErrInvalidArgument, "/"+bucket)
+		return
+	}
+	if err := s.bcfg.Update(bucket, func(c *bucketcfg.Config) { c.Encryption = alg }); err != nil {
+		writeErrorResponse(w, r, ErrInternalError, "/"+bucket)
+		return
+	}
+	writeSuccessOK(w)
+}
+
+func (s *Server) handleDeleteBucketEncryption(w http.ResponseWriter, r *http.Request, bucket string) {
+	if err := s.bcfg.Update(bucket, func(c *bucketcfg.Config) { c.Encryption = "" }); err != nil {
+		writeErrorResponse(w, r, ErrInternalError, "/"+bucket)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

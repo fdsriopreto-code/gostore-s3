@@ -58,6 +58,7 @@ const (
 	ErrMalformedPOSTRequest
 	ErrInvalidPolicyDocument
 	ErrNoSuchWebsiteConfiguration
+	ErrNoSuchEncryptionConfiguration
 	ErrInvalidWriteOffset
 	ErrServerReadOnly
 	ErrBusy
@@ -116,6 +117,7 @@ var errorCodeMap = map[APIErrorCode]APIError{
 	ErrMalformedPOSTRequest:          {"MalformedPOSTRequest", "The body of your POST request is not well-formed multipart/form-data.", http.StatusBadRequest},
 	ErrInvalidPolicyDocument:         {"InvalidPolicyDocument", "The content of the form does not meet the conditions specified in the policy document.", http.StatusForbidden},
 	ErrNoSuchWebsiteConfiguration:    {"NoSuchWebsiteConfiguration", "The specified bucket does not have a website configuration.", http.StatusNotFound},
+	ErrNoSuchEncryptionConfiguration: {"ServerSideEncryptionConfigurationNotFoundError", "The server side encryption configuration was not found.", http.StatusNotFound},
 	ErrInvalidWriteOffset:            {"InvalidWriteOffset", "The write offset must equal the current object size.", http.StatusConflict},
 	ErrServerReadOnly:                {"ServerReadOnly", "The server is in read-only mode; writes are temporarily rejected.", http.StatusServiceUnavailable},
 	ErrBusy:                          {"SlowDown", "The server is shedding load; retry shortly.", http.StatusServiceUnavailable},

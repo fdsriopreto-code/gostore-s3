@@ -48,6 +48,11 @@ type Config struct {
 	// non-SSE, single-part; already-compressed content-types are skipped).
 	Compress bool `json:"compress,omitempty"`
 
+	// Encryption, when "AES256", applies SSE-S3 at rest to every new object
+	// that doesn't already request encryption (S3 "default bucket
+	// encryption"). Empty = off.
+	Encryption string `json:"encryption,omitempty"`
+
 	// IngestKeys are long-lived, write-only, prefix-scoped upload tokens for
 	// the /gostore/ingest/ endpoint — so any backend can drop a backup with a
 	// single header, no SigV4.

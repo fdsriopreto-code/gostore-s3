@@ -293,6 +293,8 @@ func (s *Server) dispatchBucket(w http.ResponseWriter, r *http.Request, bucket s
 			s.handleGetBucketWebsite(w, r, bucket)
 		case has("compression"):
 			s.handleGetBucketCompression(w, r, bucket)
+		case has("encryption"):
+			s.handleGetBucketEncryption(w, r, bucket)
 		case has("quota"):
 			s.handleGetBucketQuota(w, r, bucket)
 		case q["list-type"] != nil && q["list-type"][0] == "2":
@@ -322,6 +324,8 @@ func (s *Server) dispatchBucket(w http.ResponseWriter, r *http.Request, bucket s
 			s.handlePutBucketWebsite(w, r, bucket)
 		case has("compression"):
 			s.handlePutBucketCompression(w, r, bucket)
+		case has("encryption"):
+			s.handlePutBucketEncryption(w, r, bucket)
 		case has("quota"):
 			s.handlePutBucketQuota(w, r, bucket)
 		case has("acl"):
@@ -343,6 +347,8 @@ func (s *Server) dispatchBucket(w http.ResponseWriter, r *http.Request, bucket s
 			s.handleDeleteBucketLifecycle(w, r, bucket)
 		case has("website"):
 			s.handleDeleteBucketWebsite(w, r, bucket)
+		case has("encryption"):
+			s.handleDeleteBucketEncryption(w, r, bucket)
 		case has("quota"):
 			s.handleDeleteBucketQuota(w, r, bucket)
 		default:
