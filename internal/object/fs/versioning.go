@@ -145,6 +145,11 @@ func (f *FS) putVersion(_ context.Context, bucket, obj string, data *object.PutO
 	if !validObjectName(obj) {
 		return object.ObjectInfo{}, object.ErrObjectNameInvalid
 	}
+	// SSE-C is not yet supported on versioned buckets; fail loudly rather than
+	// silently storing the object without the customer's encryption.
+	if len(opts.SSECustomerKey) == 32 {
+		return object.ObjectInfo{}, object.ErrNotImplemented
+	}
 	lk := f.NewNSLock(bucket, obj)
 	c, _ := lk.GetLock(context.Background(), 0)
 	defer lk.Unlock(c)
