@@ -149,6 +149,19 @@ func (s *Server) parseRequest(r *http.Request) s3Request {
 // handleS3 authenticates, authorizes, then dispatches to the operation handler.
 func (s *Server) handleS3(w http.ResponseWriter, r *http.Request) {
 	setCommonHeaders(w, s.cfg.Region)
+
+	// Friendly landing: a plain browser navigation to the root (GET /, no S3
+	// credentials, no query, Accept: text/html) is sent to the web console
+	// instead of the SigV4 "AccessDenied" XML an S3 client would expect. S3
+	// SDKs send an Authorization header (or presign query) and don't ask for
+	// text/html, so they fall through to the normal API untouched.
+	if r.Method == http.MethodGet && r.URL.Path == "/" && r.URL.RawQuery == "" &&
+		r.Header.Get("Authorization") == "" &&
+		strings.Contains(r.Header.Get("Accept"), "text/html") {
+		http.Redirect(w, r, "/gostore/console/", http.StatusFound)
+		return
+	}
+
 	req := s.parseRequest(r)
 
 	newBody, accessKey, errCode := s.authenticate(r)

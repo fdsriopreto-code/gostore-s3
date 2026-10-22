@@ -240,3 +240,34 @@ func TestSubresourceActionMapping(t *testing.T) {
 		t.Fatalf("root PutBucketLifecycle: want 200, got %d %s", c, b)
 	}
 }
+
+// A browser hitting the root (GET /, Accept: text/html, no credentials) is
+// redirected to the web console; an S3 client (no html Accept) is not.
+func TestBrowserRootRedirectsToConsole(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+	cl := srv.Client()
+	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml")
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/gostore/console/" {
+		t.Fatalf("browser root: want 302 -> /gostore/console/, got %d -> %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	resp.Body.Close()
+
+	// S3 client (no text/html Accept) must NOT be redirected.
+	req2, _ := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+	resp2, err := cl.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp2.StatusCode == http.StatusFound {
+		t.Fatalf("S3 client root was redirected (should not be): %d", resp2.StatusCode)
+	}
+	resp2.Body.Close()
+}

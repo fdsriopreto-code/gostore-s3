@@ -345,14 +345,21 @@ func serve(cfg config.Config, obj object.Layer, clusterRPC http.Handler) error {
 	go scan.Run(scanCtx)
 	logger.Info("background scanner started", "interval", scanInterval, "deepScrubInterval", scrubInterval)
 
+	// One handler serves the S3 API, the admin API, the health endpoints AND
+	// the web console. The console SPA signs every request for its own origin,
+	// so it only works on a port that also serves the API. We therefore mount
+	// the SAME handler on both the API port and the console port: whichever one
+	// is exposed (some PaaS setups publish :9001 as "the console"), the real
+	// console and the API both work there. No dead placeholder page.
+	handler := api.NewServer(cfg, obj, iamMgr, bcfg, bus, clusterRPC, scan)
 	apiSrv := &http.Server{
 		Addr:              cfg.Address,
-		Handler:           api.NewServer(cfg, obj, iamMgr, bcfg, bus, clusterRPC, scan),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	consoleSrv := &http.Server{
 		Addr:              cfg.ConsoleAddress,
-		Handler:           consolePlaceholder(cfg),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

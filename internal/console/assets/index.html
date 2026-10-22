@@ -256,6 +256,54 @@ dialog .btns{display:flex;gap:9px;justify-content:flex-end;margin-top:22px}
   #menuBtn{display:inline-flex!important}
 }
 #menuBtn{display:none;position:fixed;top:12px;left:12px;z-index:55}
+
+/* ============ visual polish (v2) ============ */
+body{background:
+  radial-gradient(1100px 520px at 100% -12%, color-mix(in srgb,var(--accent) 11%,transparent), transparent 62%),
+  radial-gradient(900px 480px at -10% 8%, color-mix(in srgb,var(--accent) 7%,transparent), transparent 60%),
+  var(--bg);background-attachment:fixed}
+aside.nav{background:linear-gradient(185deg,var(--bg-tint),var(--bg) 85%)}
+.nav .top .logo,#login .logo{background:linear-gradient(140deg,#7c6dff,#4f46e5 55%,#3b2fcf);
+  box-shadow:0 6px 16px -6px color-mix(in srgb,var(--accent) 65%,transparent)}
+.nav a{transition:background .12s,color .12s}
+.nav a.active{background:linear-gradient(135deg,var(--accent),var(--accent-2));
+  box-shadow:0 8px 18px -8px color-mix(in srgb,var(--accent) 75%,transparent)}
+.pageh h2{background:linear-gradient(180deg,var(--text),color-mix(in srgb,var(--text) 68%,var(--muted)));
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+
+.tile{position:relative;overflow:hidden;transition:transform .13s cubic-bezier(.4,0,.2,1),box-shadow .13s,border-color .13s}
+.tile::after{content:"";position:absolute;inset:0 0 auto 0;height:2px;
+  background:linear-gradient(90deg,var(--accent),transparent 65%);opacity:.7}
+.tile:hover{transform:translateY(-3px);box-shadow:var(--shadow);border-color:var(--border-2)}
+.tile .k .i{color:var(--accent)}
+
+.hero{background:
+  radial-gradient(520px 220px at 2% 0%, color-mix(in srgb,var(--accent) 17%,transparent), transparent 72%),
+  linear-gradient(135deg,var(--accent-soft),transparent 74%);position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;right:-40px;top:-40px;width:200px;height:200px;border-radius:50%;
+  background:radial-gradient(closest-side,color-mix(in srgb,var(--accent) 14%,transparent),transparent);pointer-events:none}
+
+button.primary{background:linear-gradient(135deg,var(--accent),var(--accent-2));
+  box-shadow:0 6px 16px -8px color-mix(in srgb,var(--accent) 80%,transparent)}
+button.primary:hover{filter:brightness(1.06)}
+
+#login{background:linear-gradient(180deg,var(--panel),var(--panel-2));
+  box-shadow:var(--shadow),0 0 0 1px color-mix(in srgb,var(--accent) 8%,transparent)}
+
+/* disk usage bar (dashboard) */
+.cap{background:var(--panel);border:1px solid var(--border);border-radius:var(--r2);
+  padding:16px 18px;box-shadow:var(--shadow-sm);margin-top:14px}
+.cap .caph{display:flex;align-items:center;gap:9px;margin-bottom:11px}
+.cap .caph .i{color:var(--accent)}
+.cap .caph .t{font-size:11.5px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;color:var(--faint)}
+.cap .caph .pct{margin-left:auto;font-size:14px;font-weight:700;letter-spacing:-.01em}
+.cap .track{height:10px;border-radius:99px;background:var(--code-inline);overflow:hidden}
+.cap .track>span{display:block;height:100%;border-radius:99px;
+  background:linear-gradient(90deg,var(--accent),#8b5cf6);transition:width .5s cubic-bezier(.4,0,.2,1)}
+.cap .track>span.warn{background:linear-gradient(90deg,var(--amber),#e07a1a)}
+.cap .track>span.crit{background:linear-gradient(90deg,var(--red),#e0661a)}
+.cap .lbl{display:flex;justify-content:space-between;margin-top:9px;font-size:12.5px;color:var(--muted)}
+.cap .lbl b{color:var(--text-2);font-weight:600}
 </style>
 </head>
 <body>
