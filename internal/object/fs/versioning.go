@@ -220,6 +220,9 @@ func replaceOrAppend(idx []verEntry, e verEntry, suspended bool) []verEntry {
 // deleteVersion adds a delete marker (versionID == "") or permanently removes
 // a specific version.
 func (f *FS) deleteVersion(_ context.Context, bucket, obj, versionID string, suspended, bypassGovernance bool) (object.ObjectInfo, error) {
+	if !validObjectName(obj) {
+		return object.ObjectInfo{}, object.ErrObjectNameInvalid
+	}
 	lk := f.NewNSLock(bucket, obj)
 	c, _ := lk.GetLock(context.Background(), 0)
 	defer lk.Unlock(c)

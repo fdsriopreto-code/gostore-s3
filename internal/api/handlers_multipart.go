@@ -61,8 +61,12 @@ func (s *Server) handleCopyObjectPart(w http.ResponseWriter, r *http.Request, bu
 		return
 	}
 	srcBucket, srcKey, ok := parseCopySource(r.Header.Get("x-amz-copy-source"))
-	if !ok {
+	if !ok || !validBucket(srcBucket) || !validObjectKey(srcKey) || !validObjectKey(key) {
 		writeErrorResponse(w, r, ErrInvalidArgument, "/"+bucket+"/"+key)
+		return
+	}
+	if code := s.authorizeCopySource(r, accessKeyFrom(r), srcBucket, srcKey); code != ErrNone {
+		writeErrorResponse(w, r, code, "/"+srcBucket+"/"+srcKey)
 		return
 	}
 	var startOff, length int64 = 0, -1

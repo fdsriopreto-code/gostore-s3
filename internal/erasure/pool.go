@@ -366,6 +366,9 @@ func (p *Pool) DeleteObject(ctx context.Context, bucket, key string, opts object
 	if err := p.ensureBucket(ctx, bucket); err != nil {
 		return object.ObjectInfo{}, err
 	}
+	if !validObjectName(key) {
+		return object.ObjectInfo{}, object.ErrObjectNameInvalid
+	}
 	if opts.Versioned || opts.VersionSuspended || opts.VersionID != "" {
 		return p.deleteVersioned(ctx, bucket, key, opts)
 	}
