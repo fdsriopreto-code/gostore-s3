@@ -658,6 +658,118 @@ function nameCell(bucket, key, nm) {
   return el("div", { class: "nm" }, holder, el("span", {}, nm));
 }
 
+/* ---------- gallery view + full-screen viewer (phone-friendly) ---------- */
+// Gallery is the default on narrow screens; the choice is remembered.
+let objView = (() => {
+  try { const s = localStorage.getItem("gostore.view"); if (s === "grid" || s === "list") return s; } catch {}
+  return matchMedia("(max-width:860px)").matches ? "grid" : "list";
+})();
+const IMG_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "svg"]);
+const VID_EXT = new Set(["mp4", "webm", "ogv", "mov", "m4v"]);
+const extOf = (k) => (k.split(".").pop() || "").toLowerCase();
+const mediaKind = (k) => IMG_EXT.has(extOf(k)) ? "img" : VID_EXT.has(extOf(k)) ? "vid" : "";
+
+// Lazy-load grid tiles: images come back server-resized (cover-cropped
+// squares), videos show their first frame from a metadata-only request.
+let gridObs = null;
+function lazyTile(holder, bucket, key, kind) {
+  holder.dataset.bucket = bucket; holder.dataset.key = key; holder.dataset.kind = kind;
+  if (!gridObs) {
+    gridObs = new IntersectionObserver((ents) => {
+      for (const e of ents) {
+        if (!e.isIntersecting) continue;
+        const h = e.target; gridObs.unobserve(h);
+        const path = h.dataset.bucket + "/" + h.dataset.key;
+        if (h.dataset.kind === "vid") {
+          presignGet(path, 3600).then((u) => {
+            const vd = el("video", { src: u + "#t=0.1", preload: "metadata", muted: "", playsinline: "" });
+            vd.onloadedmetadata = () => { h.querySelector(".gph")?.remove(); h.prepend(vd); };
+          }).catch(() => {});
+        } else {
+          const raster = extOf(h.dataset.key) !== "svg";
+          presignGet(path, 3600, raster ? { w: "360", h: "360", fit: "cover" } : {}).then((u) => {
+            const img = new Image();
+            img.onload = () => { h.querySelector(".gph")?.remove(); h.prepend(img); };
+            img.src = u;
+          }).catch(() => {});
+        }
+      }
+    }, { rootMargin: "400px" });
+  }
+  gridObs.observe(holder);
+}
+
+function galleryGrid(b, prefixes, objs) {
+  const g = el("div", { class: "gal" });
+  const media = objs.filter((o) => mediaKind(o.key));
+  if (bucketPrefix) {
+    const parent = bucketPrefix.replace(/[^/]+\/$/, "");
+    g.append(el("div", { class: "gi folder", onclick: () => { bucketPrefix = parent; render(); } },
+      el("div", { class: "gt" }, ic(ICON.up)), el("div", { class: "gn" }, "..")));
+  }
+  for (const p of prefixes) {
+    const nm = p.slice(bucketPrefix.length);
+    g.append(el("div", { class: "gi folder", "data-name": nm.toLowerCase(), onclick: () => { bucketPrefix = p; render(); } },
+      el("div", { class: "gt" }, ic(ICON.folder)), el("div", { class: "gn" }, nm)));
+  }
+  for (const o of objs) {
+    const nm = o.key.slice(bucketPrefix.length), kind = mediaKind(o.key);
+    const t = el("div", { class: "gt" }, el("span", { class: "gph" }, ic(ICON.file)));
+    if (kind === "vid") t.append(el("span", { class: "play" }, "▶"));
+    if (kind) lazyTile(t, b, o.key, kind);
+    else t.append(el("span", { class: "ext" }, extOf(o.key).slice(0, 4) || "file"));
+    g.append(el("div", { class: "gi", "data-name": nm.toLowerCase(),
+      onclick: () => kind ? openViewer(b, media, media.indexOf(o)) : objectDrawer(b, o) },
+      t, el("div", { class: "gn" }, nm)));
+  }
+  return g;
+}
+
+// Full-screen viewer: swipe / arrows to move, tap video to play, ✕ or Esc to close.
+async function openViewer(b, list, start) {
+  let i = start, tx = 0, ty = 0;
+  const stage = el("div", { class: "lbs" });
+  const cap = el("span", { class: "lbc" });
+  const close = () => { lb.remove(); document.removeEventListener("keydown", onKey); document.body.classList.remove("noscroll"); };
+  const bar = el("div", { class: "lbt" }, cap, el("div", { class: "grow" }),
+    el("button", { onclick: () => objectDrawer(b, list[i]) }, "ⓘ"),
+    el("button", { onclick: () => dl(b, list[i].key) }, ic(ICON.down)),
+    el("button", { onclick: async () => { const u = await presignGet(b + "/" + list[i].key, 86400); if (navigator.share) { try { await navigator.share({ url: u, title: list[i].key.split("/").pop() }); return; } catch {} } copyText(u); } }, ic(ICON.link)),
+    el("button", { onclick: close }, "✕"));
+  const prev = el("button", { class: "lbn l", onclick: () => show(i - 1) }, "‹");
+  const next = el("button", { class: "lbn r", onclick: () => show(i + 1) }, "›");
+  const lb = el("div", { class: "lb" }, bar, stage, prev, next);
+  function onKey(e) { if (e.key === "Escape") close(); else if (e.key === "ArrowLeft") show(i - 1); else if (e.key === "ArrowRight") show(i + 1); }
+  let seq = 0;
+  async function show(n) {
+    if (n < 0 || n >= list.length) return;
+    i = n; const my = ++seq, o = list[n];
+    cap.textContent = `${n + 1} / ${list.length} · ${o.key.split("/").pop()}`;
+    prev.style.visibility = n ? "" : "hidden"; next.style.visibility = n < list.length - 1 ? "" : "hidden";
+    stage.innerHTML = ""; stage.append(el("span", { class: "spin" }));
+    const kind = mediaKind(o.key), path = b + "/" + o.key;
+    let node;
+    try {
+      if (kind === "vid") node = el("video", { src: await presignGet(path, 3600), controls: "", autoplay: "", playsinline: "", preload: "metadata" });
+      else node = el("img", { src: await presignGet(path, 3600, extOf(o.key) === "svg" ? {} : { preview: "1600" }) });
+    } catch (e) { node = el("div", { class: "muted" }, e.message); }
+    if (my !== seq) return;
+    stage.innerHTML = ""; stage.append(node);
+    // warm the neighbour so swiping feels instant
+    const nb = list[n + 1]; if (nb && mediaKind(nb.key) === "img" && extOf(nb.key) !== "svg") presignGet(b + "/" + nb.key, 3600, { preview: "1600" }).then((u) => { new Image().src = u; }).catch(() => {});
+  }
+  lb.addEventListener("touchstart", (e) => { tx = e.touches[0].clientX; ty = e.touches[0].clientY; }, { passive: true });
+  lb.addEventListener("touchend", (e) => {
+    const dx = e.changedTouches[0].clientX - tx, dy = e.changedTouches[0].clientY - ty;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) show(i + (dx < 0 ? 1 : -1));
+    else if (dy > 110 && Math.abs(dy) > Math.abs(dx) * 1.5) close(); // swipe down to dismiss
+  }, { passive: true });
+  document.addEventListener("keydown", onKey);
+  document.body.classList.add("noscroll");
+  document.body.append(lb);
+  show(i);
+}
+
 let bucketPrefix = "";
 let objSort = { col: "name", dir: 1 }; // dir: 1 asc, -1 desc
 async function bucketObjects(v, b) {
@@ -674,6 +786,8 @@ async function bucketObjects(v, b) {
   const tb = el("div", { class: "toolbar" },
     el("div", { class: "search" }, ic(ICON.search), sInput),
     el("button", { class: "ghost", onclick: render }, ic(ICON.refresh)),
+    el("button", { class: "ghost", title: "Switch gallery / list view", onclick: () => { objView = objView === "grid" ? "list" : "grid"; try { localStorage.setItem("gostore.view", objView); } catch {} render(); } },
+      objView === "grid" ? "☰ List" : "▦ Gallery"),
     el("button", { class: "ghost", onclick: () => folderStats(b, bucketPrefix) }, ic(ICON.gauge), "Folder stats"),
     el("div", { class: "grow" }),
     el("button", { class: "ghost", onclick: async () => {
@@ -716,6 +830,7 @@ async function bucketObjects(v, b) {
   })).filter((o) => o.key !== bucketPrefix);
 
   if (!prefixes.length && !objs.length) { v.append(emptyState(ICON.folder, "Empty folder", "Drag files here or use Upload.")); return; }
+  if (objView === "grid") { v.append(galleryGrid(b, prefixes, objs)); return; }
   const skey = objSort.col === "modified" ? (o) => o.lm || "" : objSort.col === "size" ? (o) => +o.size || 0 : (o) => o.key.toLowerCase();
   objs.sort((a, c) => { const x = skey(a), y = skey(c); return (x < y ? -1 : x > y ? 1 : 0) * objSort.dir; });
   const sortableTh = (label, col, cls) => {
@@ -767,7 +882,7 @@ async function bucketObjects(v, b) {
     el("button", { class: "ghost sm", onclick: () => bulkDl(b, tbody) }, ic(ICON.down), "Download selected"),
     el("button", { class: "danger sm", onclick: () => bulkDel(b, tbody) }, ic(ICON.trash), "Delete selected"));
   v.append(bulk);
-  v.append(el("div", { class: "card" }, el("table", {}, el("thead", {}, el("tr", {},
+  v.append(el("div", { class: "card" }, el("table", { class: "objtbl" }, el("thead", {}, el("tr", {},
     el("th", { style: "width:34px" }, selAll), sortableTh("Name", "name"), sortableTh("Modified", "modified"), sortableTh("Size", "size", "num"), el("th", {}))), tbody)));
 
   function syncBulk() {
@@ -797,7 +912,7 @@ async function newFolder(b) {
 }
 function filterRows(q) {
   q = q.toLowerCase();
-  document.querySelectorAll("#view tbody tr[data-name]").forEach((tr) => { tr.style.display = !q || tr.dataset.name.includes(q) ? "" : "none"; });
+  document.querySelectorAll("#view [data-name]").forEach((tr) => { tr.style.display = !q || tr.dataset.name.includes(q) ? "" : "none"; });
 }
 
 // bucketSearch walks the ENTIRE bucket (all prefixes) and lists matches.
