@@ -312,7 +312,10 @@ function modal(title, hint, fields, onOK, okLabel = "Create") {
     let n;
     if (f.type === "select") { n = el("select"); for (const o of f.options) n.append(el("option", { value: o.value ?? o }, o.label ?? o)); n.value = f.value ?? ""; }
     else if (f.type === "textarea") n = el("textarea", {}, f.value ?? "");
-    else n = el("input", { type: f.type === "password" ? "password" : "text", value: f.value ?? "", spellcheck: "false", readonly: f.readonly ? "" : null });
+    else n = el("input", { type: f.type === "password" ? "password" : "text", value: f.value ?? "", spellcheck: "false", autocapitalize: "none", autocorrect: "off", autocomplete: "off", readonly: f.readonly ? "" : null });
+    // Optional live normaliser (e.g. bucket names: phone keyboards capitalise
+    // the first letter and insert spaces/accents, which S3 rejects).
+    if (f.normalize) n.addEventListener("input", () => { const p = f.normalize(n.value); if (p !== n.value) n.value = p; });
     inp[f.name] = n; d.append(n);
   }
   const btns = el("div", { class: "btns" });
@@ -564,6 +567,12 @@ function kvRow(k, val, copyable) {
       copyable && val ? el("button", { class: "ghost iconbtn", onclick: () => copyText(val), title: "Copy" }, ic(ICON.copy)) : null)];
 }
 
+// bucketSlug turns whatever the user (or a phone keyboard) typed into a valid
+// bucket name: lowercase, accents stripped, spaces/underscores -> "-".
+function bucketSlug(s) {
+  return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
+    .replace(/[\s_]+/g, "-").replace(/[^a-z0-9.-]/g, "").slice(0, 63);
+}
 async function viewBuckets(v) {
   const doc = parseXml(await (await must(await api("GET", "/"))).text());
   const names = [...doc.getElementsByTagName("Name")].map((n) => n.textContent);
@@ -571,7 +580,7 @@ async function viewBuckets(v) {
   pageHeader(v, "Buckets", names.length + (names.length === 1 ? " bucket" : " buckets"), [
     el("button", { class: "ghost", onclick: render }, ic(ICON.refresh), "Refresh"),
     el("button", { class: "primary", onclick: () => modal("Create bucket", "3–63 chars · lowercase letters, digits, - and .",
-      [{ name: "name", label: "Bucket name" },
+      [{ name: "name", label: "Bucket name", normalize: bucketSlug },
        { name: "lock", label: "Object Lock", type: "select", options: [{ label: "Disabled", value: "" }, { label: "Enabled (implies versioning)", value: "1" }] }],
       async (val) => {
         const h = val.lock ? { "x-amz-bucket-object-lock-enabled": "true" } : {};
